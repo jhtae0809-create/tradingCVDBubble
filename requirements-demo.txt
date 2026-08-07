@@ -1,0 +1,20 @@
+# Minimal dependency set to RUN THE DASHBOARD on the bundled demo dataset.
+#
+# The dashboard itself never imports ib_async or the FinViz client — those are
+# only needed to COLLECT new data. So a reviewer who just wants to open the app
+# and look at the chart can install this shorter list instead of the full
+# requirements.txt (no broker library, no scraping stack).
+#
+#   pip install -r requirements-demo.txt
+#   python -m scripts.demo_dataset load
+#   python -m app
+#
+# Tested on Python 3.12.4.
+
+dash==4.4.0
+dash-bootstrap-components==2.0.4
+plotly==6.8.0
+pandas==3.0.2
+numpy==1.26.4
+pymongo==4.17.0
+tzdata==2025.3

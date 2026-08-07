@@ -175,8 +175,7 @@ flow meets a wall**:
     (This is exactly what a 🟣 purple *absorption* bubble flags — big delta, no
     price move — and it usually prints right at one of these lines.)
   - CVD climbing into a resistance wall and the wall **shrinks / disappears** on
-    the heatmap → the wall is being eaten → a **breakout**, and for a squeeze
-    name that break can trigger the run we are looking for.
+    the heatmap → the wall is being eaten → a **breakout**.
 - **They are the decision points.** Entries, exits and stops are placed relative
   to these two levels: buy the hold at support, take profit into resistance, and
   treat a decisive break (confirmed by CVD) as the signal to stay in for the

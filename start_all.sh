@@ -12,7 +12,32 @@
 # Prerequisite: IB Gateway running + logged in, API enabled on port 7497.
 set -u
 cd "$(dirname "$0")"
-PY=/Users/jhtae/.pyenv/versions/3.12.4/bin/python
+
+# Interpreter resolution, most specific first, so the repo runs on any machine:
+#   1. $PYTHON            — explicit override, e.g.  PYTHON=python3.12 ./start_all.sh
+#   2. an activated venv  — $VIRTUAL_ENV/bin/python
+#   3. ./venv_main        — the venv this repo creates by convention
+#   4. python3 on PATH
+if [ -n "${PYTHON:-}" ]; then
+    PY="$PYTHON"
+elif [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+    PY="$VIRTUAL_ENV/bin/python"
+elif [ -x "venv_main/bin/python" ]; then
+    PY="venv_main/bin/python"
+else
+    PY="$(command -v python3 || true)"
+fi
+
+if [ -z "$PY" ] || ! "$PY" -c "import dash" 2>/dev/null; then
+    echo "ERROR: no usable Python found (tried: ${PY:-none})."
+    echo "  Create the venv and install dependencies first:"
+    echo "    python3 -m venv venv_main"
+    echo "    ./venv_main/bin/pip install -r requirements.txt"
+    echo "  Or point PYTHON at an interpreter that already has them:"
+    echo "    PYTHON=/path/to/python ./start_all.sh"
+    exit 1
+fi
+echo "  using interpreter: $PY"
 
 echo "== starting =="
 

@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import logging
 import json
+import os
 import time
 from dash.exceptions import PreventUpdate
 
@@ -242,6 +243,28 @@ app.index_string = '''
                                     var m = (hi - lo) * HEAT_MARGIN;
                                     lo = Math.min(lo, Math.max(hlo, lo - m));
                                     hi = Math.max(hi, Math.min(hhi, hi + m));
+                                }
+                                // The two S&R lines are LAYOUT SHAPES (not traces),
+                                // so the loop above never sees them. They are the
+                                // key trade signal and the depth selector may clip a
+                                // wall out of the heatmap, so pull the price-panel
+                                // S&R line prices into the fit UNCONDITIONALLY (not
+                                // capped like the heatmap) — otherwise this
+                                // client-side refit re-crops the axis to candles +
+                                // clipped heatmap right after the server render and
+                                // hides the far wall (the "only one S&R line shows
+                                // at 10 levels" bug). On the price panel (yref 'y')
+                                // the only line shapes are the S&R lines; the source
+                                // shading / demarcation shapes use yref 'paper'.
+                                if (yref === 'y' && gd._fullLayout.shapes) {
+                                    gd._fullLayout.shapes.forEach(function(sh) {
+                                        if (sh && sh.type === 'line' &&
+                                            (sh.yref === 'y' || sh.yref === 'y1') &&
+                                            sh.y0 != null) {
+                                            if (sh.y0 < lo) lo = sh.y0;
+                                            if (sh.y0 > hi) hi = sh.y0;
+                                        }
+                                    });
                                 }
                                 var pad = (hi - lo) * YPAD;
                                 var new_lo = lo - pad;
@@ -1310,9 +1333,17 @@ def update_graph(ticker, base_tf, active_tf, n_intervals, n_clicks, days_to_load
                 if _zm is not None and len(_closes):
                     # last VALID close — session-grid empty candles carry NaN
                     _mid = float(_closes.iloc[-1])
+                    # S&R is computed on the FULL book (before the depth clip) so
+                    # the strongest support AND resistance walls are always found
+                    # and classified with full-book context — the depth selector
+                    # must never hide one side. (The score threshold and bid/ask
+                    # dominance are relative to the levels passed in, so clipping
+                    # first would drop the far wall and skew the classification.)
+                    _sr = compute_support_resistance(_yl, _zm, _mid, z_bid=_zb)
                     # Depth-zoom: the "L2 Depth" selector (10 / 20 / Full book)
-                    # keeps that many price levels each side of the current mid,
-                    # so the heatmap reads like Bookmap at the chosen depth.
+                    # then clips only the HEATMAP display to that many levels each
+                    # side of the current mid, so it reads like Bookmap at the
+                    # chosen depth while the two S&R lines stay full-book.
                     _yl, _zm, _zb = _clip_l2_levels(_yl, _zm, _zb, _mid, show_l2)
                     # x_times = the candle timestamps the z-columns were built on
                     # (the fetch used the LAST max_candles of _l2_win); build_chart
@@ -1321,7 +1352,7 @@ def update_graph(ticker, base_tf, active_tf, n_intervals, n_clicks, days_to_load
                     _nz = int(_zm.shape[1])
                     l2_data = {"y_levels": _yl, "z": _zm,
                                "x_times": list(_l2_win.index[-_nz:]),
-                               "sr": compute_support_resistance(_yl, _zm, _mid, z_bid=_zb)}
+                               "sr": _sr}
                 else:
                     logging.info(f"L2: no depth snapshots for {ticker} in the visible window")
             except Exception as e:
@@ -1407,8 +1438,10 @@ def update_graph(ticker, base_tf, active_tf, n_intervals, n_clicks, days_to_load
         # trigger the axes stay untouched and uirevision preserves whatever
         # manual scale the user set on the price axis.
         y_auto = bool(yauto_value)
+        # 'l2-dropdown' included so changing the L2 depth always refits the price
+        # axis to the new heatmap + both S&R lines, even when Y Auto-Scale is off.
         fresh_view = trigger in ('ticker-input', 'source-radio',
-                                 'timeframe-dropdown', 'yauto-check')
+                                 'timeframe-dropdown', 'yauto-check', 'l2-dropdown')
 
         df_vis = df_active[(df_active['x_idx'] >= x0) & (df_active['x_idx'] <= x1)]
         if not df_vis.empty and (y_auto or fresh_view):
@@ -1436,6 +1469,17 @@ def update_graph(ticker, base_tf, active_tf, n_intervals, n_clicks, days_to_load
                         _pad = max(0.02, 0.05 * (max(_lv) - min(_lv)))
                         y_price = [min(y_price[0], min(_lv) - _pad),
                                    max(y_price[1], max(_lv) + _pad)]
+                # The two S&R lines are computed on the full book but the heatmap
+                # may be clipped to a shallow depth, so a wall can sit outside the
+                # visible band. Include the S&R prices in the fit so BOTH the
+                # support and resistance lines are always on screen — they are the
+                # key signal, and the depth selector must not hide one.
+                _sr_lv = [lvl["price"] for lvl in (l2_data.get("sr") or [])]
+                if _sr_lv and y_price:
+                    _srpad = 0.02 * (max(_sr_lv) - min(_sr_lv)) if len(_sr_lv) > 1 else 0.0
+                    _srpad = max(0.02, _srpad)
+                    y_price = [min(y_price[0], min(_sr_lv) - _srpad),
+                               max(y_price[1], max(_sr_lv) + _srpad)]
             y_price = user_y.get('yaxis', y_price)
             y_pa = user_y.get('yaxis2', y_pa)
             y_pb = user_y.get('yaxis4', y_pb)
@@ -1713,4 +1757,12 @@ def update_pie_charts_on_pan(relayout_data):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=8050)
+    # Overridable so the app can run on a machine where 8050 is taken, or be
+    # reached from another host:  PORT=8060 HOST=0.0.0.0 python -m app
+    # DASH_DEBUG=0 turns off the auto-reloader (which otherwise starts a second
+    # process — keep it on for development, off when running it as a service).
+    app.run(
+        debug=os.environ.get("DASH_DEBUG", "1") != "0",
+        host=os.environ.get("HOST", "127.0.0.1"),
+        port=int(os.environ.get("PORT", "8050")),
+    )

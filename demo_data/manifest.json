@@ -1,0 +1,37 @@
+{
+  "ticker": "NVDA",
+  "demo_day": "2026-07-22",
+  "generated_at": "2026-08-04T10:10:18",
+  "files": {
+    "candles_1day.jsonl.gz": {
+      "collection": "finviz_db.candles",
+      "timeframe": "1day",
+      "docs": 2538,
+      "bytes": 152146
+    },
+    "candles_30min.jsonl.gz": {
+      "collection": "finviz_db.candles",
+      "timeframe": "30min",
+      "docs": 1871,
+      "bytes": 127858
+    },
+    "candles_1min.jsonl.gz": {
+      "collection": "finviz_db.candles",
+      "timeframe": "1min",
+      "docs": 21121,
+      "bytes": 1289151
+    },
+    "candles_1sec.jsonl.gz": {
+      "collection": "finviz_db.candles",
+      "timeframe": "1sec",
+      "docs": 41018,
+      "bytes": 772130
+    },
+    "level2_snapshots.jsonl.gz": {
+      "collection": "trading_cvd.level2_snapshots",
+      "docs": 12479,
+      "bytes": 402136,
+      "subsample_every": 12
+    }
+  }
+}

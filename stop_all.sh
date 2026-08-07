@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
-# stop_all.sh - stop the supervisor (which stops its collector children) + the app.
+# stop_all.sh - stop the collector + the dashboard app.
+# The current system runs only ibkr.dynamic_collector and `python -m app`; the
+# other patterns below are older collector layouts (separate tick/level2
+# processes, the supervisor) that are matched too so a machine left running an
+# earlier version still gets cleaned up.
 # (IB Gateway and MongoDB are left running - infrastructure, managed manually)
 set -u
 echo "== stopping =="

@@ -8,8 +8,17 @@
 #   Disable : launchctl unload ~/Library/LaunchAgents/com.tradingcvd.grid.plist
 
 set -euo pipefail
-REPO="/Users/jhtae/projects/tradingCVDBubble"
-PY="/Users/jhtae/.pyenv/versions/3.12.4/bin/python3"
+# Resolve the repo from this script's own location (scripts/ -> repo root) so the
+# launchd agent works regardless of where the repo is checked out.
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# $PYTHON overrides; otherwise prefer the repo venv, then python3 on PATH.
+if [ -n "${PYTHON:-}" ]; then
+    PY="$PYTHON"
+elif [ -x "$REPO/venv_main/bin/python" ]; then
+    PY="$REPO/venv_main/bin/python"
+else
+    PY="$(command -v python3)"
+fi
 LOG="$REPO/scripts/grid_daily.log"
 
 cd "$REPO"

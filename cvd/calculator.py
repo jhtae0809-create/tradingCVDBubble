@@ -411,9 +411,11 @@ def add_cvd_columns(df: pd.DataFrame) -> pd.DataFrame:
         selling_volume - sell volume per bar
         delta          - buying_volume - selling_volume
         source         - 'ibkr_tick' | 'ibkr_hist' | 'finviz_wick'
-        is_auction     - True for closing-auction bars (neutralized)
-        delta_raw      - delta before auction neutralization
-        auction_volume - volume from auction bars only
+        is_auction     - True for closing-auction bars (IBKR: volume removed;
+                         FinViz: direction neutralized, volume kept)
+        delta_raw      - delta before auction neutralization/removal
+        auction_volume - kept auction volume still in `volume` (FinViz bars only;
+                         removed IBKR auction is not counted here)
         cvd_all        - all-time cumulative delta (auction-neutralized)
         cvd_all_raw    - all-time cumulative delta (includes auction)
 
@@ -485,14 +487,24 @@ def add_cvd_columns(df: pd.DataFrame) -> pd.DataFrame:
         if "source" not in df.columns:
             df["source"] = "finviz_wick"
 
-    # ── Closing-auction handling (neutralize direction, keep volume) ──────────
-    # The 15:59 closing cross is a single-price doji carrying ~99% of its minute
-    # as one batch auction; the wick model assigns its direction from a 1-2 cent
-    # open/close difference, so its buy/sell SIGN is noise that would otherwise
-    # dominate CVD (it alone drives the curve, ~26% of total |delta|). We KEEP its
-    # volume but NEUTRALIZE the split (buy = sell = volume/2, delta = 0) for the
-    # default CVD, and keep an un-neutralized `delta_raw` so a "CVD raw (incl.
-    # auction)" line stays available for comparison. See Personal Study Log §8.
+    # ── Closing-auction handling ──────────────────────────────────────────────
+    # The 15:59/16:00 closing cross is a single-price doji carrying ~99% of its
+    # minute as one batch auction (MOC); the wick model assigns its direction from
+    # a 1-2 cent open/close difference, so its buy/sell SIGN is noise that would
+    # otherwise dominate CVD (it alone drives the curve, ~26% of total |delta|).
+    #
+    # Handling depends on how confident the detection is:
+    #   • IBKR (ibkr_tick / ibkr_hist): the cross is identified from the print's
+    #     condition code + volume, so the flag is trustworthy → REMOVE the auction
+    #     volume from the bar entirely (volume, buy, sell → 0). A batch MOC cross
+    #     is not order flow, and dropping it leaves a clean volume profile with no
+    #     grayed-out auction bar to read around.
+    #   • FinViz (finviz_wick / unknown source): detection is only a volume
+    #     heuristic (an estimate), so we KEEP the volume but NEUTRALIZE the split
+    #     (buy = sell = volume/2, delta = 0) and gray the bar, in case the flag is
+    #     a false positive.
+    # In both cases an un-neutralized `delta_raw` is kept so a "CVD raw (incl.
+    # auction)" comparison line stays available. See Personal Study Log §8.
     df["is_auction"]     = _flag_auction(df)
 
     # Ground-truth override: a bar whose stored AllLast condition code marks the
@@ -504,15 +516,28 @@ def add_cvd_columns(df: pd.DataFrame) -> pd.DataFrame:
         code_auc = df["special_conditions"].map(_has_auction_condition)
         df["is_auction"] = df["is_auction"] | code_auc.fillna(False).astype(bool)
 
-    # We apply neutralization for all sources, including ibkr_tick, because the
-    # 16:00 closing cross (MOC) prints as a huge block volume, not an aggressive hit.
-
-    df["delta_raw"]      = df["delta"]                       # before neutralization
+    df["delta_raw"]      = df["delta"]                       # before neutralize/remove
     auc = df["is_auction"]
-    df.loc[auc, "buying_volume"]  = df.loc[auc, "volume"] / 2
-    df.loc[auc, "selling_volume"] = df.loc[auc, "volume"] / 2
-    df.loc[auc, "delta"]          = 0.0
-    df["auction_volume"] = df["volume"].where(auc, 0.0)     # per-bar auction volume
+
+    # Split auction bars by source confidence (see block comment above).
+    ibkr_auc   = auc & df["source"].isin(["ibkr_tick", "ibkr_hist"])
+    finviz_auc = auc & ~ibkr_auc
+
+    # FinViz estimate → neutralize direction, keep the volume (grayed downstream).
+    df.loc[finviz_auc, "buying_volume"]  = df.loc[finviz_auc, "volume"] / 2
+    df.loc[finviz_auc, "selling_volume"] = df.loc[finviz_auc, "volume"] / 2
+    df.loc[finviz_auc, "delta"]          = 0.0
+
+    # IBKR confident → remove the auction volume from the bar entirely.
+    df.loc[ibkr_auc, "buying_volume"]  = 0.0
+    df.loc[ibkr_auc, "selling_volume"] = 0.0
+    df.loc[ibkr_auc, "delta"]          = 0.0
+    df.loc[ibkr_auc, "volume"]         = 0.0
+
+    # Per-bar auction volume STILL counted in `volume` (finviz only; the removed
+    # IBKR auction is no longer in `volume`, so it must not be double-counted or
+    # gray its bar). Drives auction_frac → gray-out in the visualizer.
+    df["auction_volume"] = df["volume"].where(finviz_auc, 0.0)
 
     # CVD (all-time): default = auction-neutralized; raw = includes the auction.
     df["cvd_all"]     = df["delta"].cumsum()
