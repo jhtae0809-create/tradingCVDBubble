@@ -41,14 +41,27 @@ That is the single most common reason a fresh clone shows an empty chart.
 | live only | **Market-data subscription** (e.g. Nasdaq TotalView) | Without it, depth requests fail (`error 309`) and quotes are delayed. |
 | optional | **FinViz Elite account** | Consolidated 1-minute bars, used to scale the thin tick-stream volume to real traded volume. The app runs without it; only FinViz-sourced bars are unavailable. |
 
-**IB Gateway / TWS port.** The collector defaults to **7497 = TWS paper**. The
-other ports are **IB Gateway paper 4002**, TWS live 7496, Gateway live 4001. If
-you run IB **Gateway** with its defaults, you must pass the port explicitly or
-the collector will never connect:
+**IB Gateway / TWS port — auto-detected.** Gateway and TWS speak the *identical*
+API; only the port differs, and either application can be configured to use any
+port. So the collector probes them in order and uses whichever answers:
+
+| Port | Default owner |
+|---|---|
+| 7497 | TWS paper |
+| 4002 | IB Gateway paper |
+| 7496 | TWS live |
+| 4001 | IB Gateway live |
+
+You do not normally need to configure anything. To force one (and skip probing):
 
 ```bash
 python -m ibkr.dynamic_collector --port 4002
 ```
+
+With an explicit `--port` the collector dials **only** that port and fails
+loudly rather than silently falling back, so a deliberate choice is never
+overridden. If nothing answers, it prints the full checklist (Gateway logged in?
+API enabled? port match? 127.0.0.1 trusted?) instead of a bare connection error.
 
 ---
 
@@ -431,7 +444,8 @@ That is not a crash; load the bundled dataset
 
 | Symptom | Cause / fix |
 |---|---|
-| Nothing is collected, collector log shows no connection | IB Gateway / TWS must be logged in with the API enabled, **and the port must match**: Gateway paper is **4002**, not 7497. `python -m ibkr.dynamic_collector --port 4002`. |
+| Nothing is collected, collector log shows no connection | The collector now probes 7497 / 4002 / 7496 / 4001 automatically, so this is no longer a port default problem. Check `logs_collector.log` — on total failure it lists every port it tried and why. Usual causes: Gateway/TWS not **logged in**, "Enable ActiveX and Socket Clients" unticked, or 127.0.0.1 missing from Trusted IPs. |
+| Collector connects but to the wrong instance (e.g. paper when you wanted live) | Both were listening and the probe took the first. Pin it: `python -m ibkr.dynamic_collector --port 7496`. |
 | `error 309 / not subscribed` | The IBKR account lacks a market-depth subscription (e.g. Nasdaq TotalView). Depth is unavailable; the rest still works. |
 | `error 10189 — requested market data is not subscribed` | Real-time market-data permission is missing or was lost (it can drop when the account session changes). Re-check the subscription in Account Management. |
 | `clientId already in use` / collector keeps disconnecting | Two collectors are running. Run `./stop_all.sh` before `./start_all.sh`. |

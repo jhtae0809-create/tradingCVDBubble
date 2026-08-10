@@ -65,13 +65,35 @@ FINVIZ_REFRESH_SEC = 600     # consolidated-volume reference refresh cadence
 DEPTH_INTERVAL_SEC = 0.5
 DEPTH_STALE_RECONNECT_SEC = 120.0
 
+# Every IB API port, in the order we probe them. IB Gateway and TWS speak the
+# IDENTICAL API — the port is the only difference — so dialling the wrong one
+# does not fail loudly, it just means the collector connects to nothing and
+# silently never collects. That made "I ran it and nothing happened" the most
+# common live-mode failure, since the old default (7497) is TWS paper while
+# IB Gateway defaults to 4002. With no --port we try all four.
+# Labels name each port's DEFAULT owner, not what is necessarily listening:
+# either application can be pointed at any port, so a Gateway configured on 7497
+# is perfectly normal. Probing is what settles it.
+IB_PORTS = [
+    (7497, "TWS paper default"),
+    (4002, "IB Gateway paper default"),
+    (7496, "TWS live default"),
+    (4001, "IB Gateway live default"),
+]
+CONNECT_PROBE_TIMEOUT = 5.0     # per-port probe; a closed port refuses instantly
+
 
 class UnifiedCollector:
-    def __init__(self, port: int, client_id: int, max_tickers: int, max_depth: int,
+    def __init__(self, port: int | None, client_id: int, max_tickers: int, max_depth: int,
                  pinned: list[str], backfill_hours: float, collect_l2: bool = True,
                  depth_rows: int = 10, depth_interval: float = DEPTH_INTERVAL_SEC,
                  smart_depth: bool = True):
-        self.port = port
+        # port=None means "auto-detect" (see IB_PORTS / _connect_any). Once a
+        # port answers it is stored here, so the tick collectors and backfill
+        # connections spawned later all dial the same endpoint.
+        self.auto_port = port is None
+        self.port = port if port is not None else IB_PORTS[0][0]
+        self._last_good_port: int | None = None
         self.client_id = client_id
         self.max_tickers = max_tickers
         self.max_depth = max_depth
@@ -330,16 +352,67 @@ class UnifiedCollector:
                 await asyncio.sleep(3)   # be polite to FinViz
             await asyncio.sleep(FINVIZ_REFRESH_SEC)
 
+    # ── Connection ───────────────────────────────────────────────────────────
+
+    async def _connect_any(self):
+        """Connect to whichever IB endpoint is actually listening.
+
+        With an explicit --port we dial only that one, so a deliberate choice is
+        never silently overridden. Otherwise we walk IB_PORTS until one answers,
+        trying the last known-good port first so reconnects are immediate. The
+        chosen port is pinned to self.port because TickCollector and the backfill
+        worker open their own connections and must reach the same Gateway/TWS.
+        """
+        if not self.auto_port:
+            candidates = [(self.port, "explicit --port")]
+        else:
+            candidates = sorted(
+                IB_PORTS, key=lambda pl: pl[0] != self._last_good_port)
+
+        errors = []
+        for port, label in candidates:
+            try:
+                logging.info(f"[col] connecting to IB on port {port} ({label}), "
+                             f"clientId={self.client_id}...")
+                await self.ib.connectAsync("127.0.0.1", port,
+                                           clientId=self.client_id,
+                                           timeout=CONNECT_PROBE_TIMEOUT)
+            except Exception as e:
+                errors.append(f"{port} ({label}): {e!r}")
+                continue
+
+            if self._last_good_port != port:
+                logging.info(f"[col] connected on port {port} ({label}) — tick "
+                             f"and backfill connections will use it too")
+            self.port = port
+            self._last_good_port = port
+            return
+
+        # Nothing answered. This is the failure people hit most often, so spell
+        # out every cause rather than leaving a bare connection refusal.
+        detail = "\n  ".join(errors)
+        logging.error(
+            "[col] could not reach IB on any known API port.\n"
+            f"  {detail}\n"
+            "  Check, in order:\n"
+            "    1. IB Gateway or TWS is running AND logged in.\n"
+            "    2. API is enabled: Configuration > Settings > API > Settings >\n"
+            "       'Enable ActiveX and Socket Clients'.\n"
+            "    3. The API port there matches one of "
+            f"{', '.join(str(p) for p, _ in IB_PORTS)} "
+            "(Gateway paper is 4002, TWS paper 7497).\n"
+            "    4. 127.0.0.1 is in the Trusted IPs list.\n"
+            "  Force a specific port with:  python -m ibkr.dynamic_collector --port <n>"
+        )
+        raise ConnectionError("no IB API port answered")
+
     # ── Main loop with reconnect ─────────────────────────────────────────────
 
     async def run(self):
         try:
             while True:
                 try:
-                    logging.info(f"[col] connecting to IB "
-                                 f"(port={self.port}, clientId={self.client_id})...")
-                    await self.ib.connectAsync("127.0.0.1", self.port,
-                                               clientId=self.client_id)
+                    await self._connect_any()
                     logging.info(f"[col] connected — pinned={self.pinned} "
                                  f"max_ticks={self.max_tickers} max_depth="
                                  f"{self.max_depth if self.collect_l2 else 0}")
@@ -413,7 +486,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="Unified IBKR collector (ticks + 1sec backfill + L2 depth), "
                     "driven by app ticker searches.")
-    parser.add_argument("--port", type=int, default=7497)
+    parser.add_argument(
+        "--port", type=int, default=None,
+        help="IB API port. Omit to auto-detect by trying, in order: "
+             + ", ".join(f"{p} ({label})" for p, label in IB_PORTS)
+             + ". Gateway and TWS speak the same API; only the port differs.")
     parser.add_argument("--client-id", type=int, default=40, dest="client_id",
                         help="clientId for the streaming connection; +1 is used "
                              "for catch-up backfills (default: 40)")

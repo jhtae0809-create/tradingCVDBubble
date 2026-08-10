@@ -10,9 +10,10 @@
 # No supervisor, no separate tick/dynamic/level2 collectors — one connection,
 # one clientId (40; backfills use 41). The collector reconnects on its own.
 # Prerequisites: MongoDB running on localhost:27017, and (for live data) IB
-# Gateway or TWS logged in with the API enabled. The collector defaults to port
-# 7497 = TWS paper; IB Gateway paper is 4002, TWS live 7496, Gateway live 4001.
-# Override with:  python -m ibkr.dynamic_collector --port 4002
+# Gateway or TWS logged in with the API enabled. The collector auto-detects the
+# API port (7497 TWS paper / 4002 Gateway paper / 7496 TWS live / 4001 Gateway
+# live), since both applications speak the same API and either can be pointed at
+# any port. Pin one with:  python -m ibkr.dynamic_collector --port 4002
 set -u
 cd "$(dirname "$0")"
 
