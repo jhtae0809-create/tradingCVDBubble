@@ -5,21 +5,34 @@ sources are merged and marked, how the CVD lines are computed, and how to use
 the Level-2 depth, the volume pies, and the "Jump to" time navigation.
 
 The dashboard runs at `http://127.0.0.1:8050` (start it with `./start_all.sh`).
+For installing it and for setup problems, see **[README.md](README.md)** —
+this guide assumes the app is already up.
+
+> **The chart draws only what is in MongoDB.** It has no data of its own. An
+> empty or near-empty chart usually means the database has nothing for that
+> ticker and time range, not that something crashed. See
+> [§9 When the chart looks wrong or empty](#9-when-the-chart-looks-wrong-or-empty).
 
 ---
 
 ## 1. Quick start
 
-1. **Ticker** — type a symbol (e.g. `NVDA`) in the top-left box.
+1. **Search Ticker** — type a symbol (e.g. `NVDA`) in the top-left box and press
+   Enter.
    - If the symbol is not recognized anywhere (FinViz or IBKR), the chart says
      **"'XYZ' is not a recognized ticker"** instead of spinning forever.
    - A valid but brand-new 1-second ticker shows **"Fetching … backfill in
      progress"** while its history is pulled in the background, then fills in.
-2. **Data source** — the radio toggle picks the base feed:
-   - **Tick (IBKR)** → true trade-by-trade data (1-second and up).
-   - **FinViz** → 1-minute consolidated bars and up (used for longer history).
+2. **Base Data Source** — the radio toggle picks the base feed:
+   - **`Tiered: IBKR ticks + history (default)`** → true trade-by-trade data
+     where it exists (1-second and up), transparently falling back to coarser
+     stored history further back. This is the one you normally want.
+   - **`1-Min Base (FinViz legacy)`** → 1-minute consolidated bars and up, the
+     pre-tick path. Requires a FinViz Elite token; without one this source has
+     nothing to show.
 3. **Active Timeframe** — the dropdown (1sec, 5sec, 1min, 5min, 1hr, 1day, …).
-   The list adapts to the chosen source.
+   The list adapts to the chosen source, and is **empty until a ticker with data
+   is loaded**.
 
 The chart has **three stacked panels** sharing one time axis:
 - **Top:** price candles (+ bubbles, + L2 depth, + volume pies).
@@ -215,6 +228,44 @@ bars, auto-updating).
 - **Y Auto-Scale** — ON: the price axis auto-fits as you pan. OFF: your manual
   y-zoom sticks.
 - **Manual Refresh** — force a data reload without waiting for the poll.
+
+---
+
+## 10. When the chart looks wrong or empty
+
+Most "it's broken" moments are one of these, and most are expected behaviour
+rather than faults. Setup and install problems are in
+**[README.md → When it doesn't work](README.md#when-it-doesnt-work)**.
+
+### Nothing renders at all
+
+| What you see | What it means |
+|---|---|
+| Blank chart, **no message**, empty Timeframe dropdown | The database has nothing for this ticker. Load the bundled dataset (`python -m scripts.demo_dataset load`) or run the collector and search the ticker. |
+| **"Fetching … backfill in progress"** (orange) | Normal for a brand-new 1-second ticker; the IBKR backfill takes up to ~1 minute. If it never resolves, the collector is not running or IB Gateway is not connected. |
+| **"'XYZ' is not a recognized ticker"** (red) | FinViz does not list the symbol. A symbol that exists on IBKR but not on FinViz can be misflagged this way. |
+| **"⚠ Error fetching …"** (red) | A real exception during fetch. Check `logs_app.log`. A missing FinViz token no longer produces this — it is skipped silently. |
+| Chart never updates after restarting the app | Stale Dash callback spec — hard-refresh the browser. |
+
+### It renders, but the data looks wrong
+
+| What you see | What it means |
+|---|---|
+| Large **shaded (yellow / blue) regions** | Not an error — those bars have no tick detail, so buy/sell is a BVC/wick **estimate**. See §2. Only unshaded regions are measured aggressor flow. |
+| 1-second candles disagree with TradingView | Backfilled 1-second data is thin (~10–15% of the consolidated tape, IEX-biased). Live-collected regular-hours data is accurate; historical backfill is not. |
+| A **permanent gap** in 1-second history | The collector was not running then. Full 1-second history cannot be re-backfilled after the fact. |
+| Volume looks far too small | The raw tick stream captures only ~7–14% of consolidated volume; FinViz bars are used to rescale it. Without a FinViz token that rescaling is unavailable. |
+| Flat / zero-volume bars outside market hours | After-hours backfill filler, and genuinely thin odd-lot tick data. |
+| One huge gray bar at 16:00 | The closing auction (MOC), detected and neutralized on purpose — see §2. |
+
+### The Level-2 heatmap
+
+| What you see | What it means |
+|---|---|
+| No heatmap at all | **L2 Depth** is Off, or there are no depth snapshots for this time range. Depth is only collected for the 3 most recently searched tickers. |
+| Heatmap in live mode is empty and the log shows `error 309` | The IBKR account has no market-depth subscription. |
+| Only one S&R line (support but no resistance, or vice versa) | Correct when the book is genuinely one-sided at that moment — a side only draws a line if it has a wall passing the persistence + size threshold. |
+| The book looks shallow next to Bookmap | Expected: IBKR SMART depth returns ~20 levels within roughly ±5% of price, not the full book. |
 
 ---
 

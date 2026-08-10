@@ -6,6 +6,7 @@ from cvd.visualizer import build_chart, MAX_CANDLES, pie_layout
 from history.schema import SERVE_TIER, SERVE_WINDOW_DAYS
 from history.serve import run_pipeline_tiered, invalidate_cache
 from level2_webapp.data_provider import fetch_and_aggregate_l2_data, compute_support_resistance
+from finviz.errors import FinvizNotConfigured
 import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
@@ -1091,6 +1092,12 @@ def update_graph(ticker, base_tf, active_tf, n_intervals, n_clicks, days_to_load
                 invalidate_cache(ticker)
                 df_base, frames = run_pipeline_tiered(ticker, active_tf, days=actual_days)
                 fallback_msg = " [FinViz history backfilled]"
+            except FinvizNotConfigured as e:
+                # No FinViz account configured: an expected state, not a failure.
+                # Leave fetch_error unset so the chart falls through to the
+                # normal "no data for this range yet" message instead of a red
+                # error banner — IBKR data (incl. the demo dataset) still draws.
+                logging.info(f"FinViz backfill skipped for {ticker}: {e}")
             except Exception as e:
                 logging.error(f"Instant FinViz backfill failed: {e}")
                 fetch_error = e
@@ -1151,6 +1158,8 @@ def update_graph(ticker, base_tf, active_tf, n_intervals, n_clicks, days_to_load
                     # 3. Reload pipeline with newly fetched FinViz data as temporary fallback
                     df_base, frames = run_pipeline(ticker, base_timeframe='i1' if fv_tf == 'i1' else 'd', days=actual_days)
                     fallback_msg = " [Rendering FinViz Fallback - IBKR Backfill in Progress...]"
+                except FinvizNotConfigured as e:
+                    logging.info(f"FinViz fallback skipped for {ticker}: {e}")
                 except Exception as e:
                     logging.error(f"Fallback fetch failed: {e}")
                     fetch_error = e

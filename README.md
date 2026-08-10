@@ -17,40 +17,110 @@ accumulates. What it produces is a **measurement layer**, not a trading
 strategy — see [Where this could be applied](#where-this-could-be-applied).
 
 - **[USAGE.md](USAGE.md) — how to read the chart** (every color, line and control).
-- Jump to: [Quick start](#quick-start-live-data) ·
-  [Demo mode](#demo-mode-optional-no-broker-account) ·
+- Jump to: [Requirements](#requirements) · [Install](#install) ·
+  [Run it: live data](#run-it-a-live-data) ·
+  [Run it: bundled dataset](#run-it-b-bundled-dataset-no-accounts-needed) ·
   [What is where](#what-is-where) ·
   [How it works](#how-it-works) · [Known issues](#known-issues--current-limitations) ·
-  [Troubleshooting](#troubleshooting)
+  [When it doesn't work](#when-it-doesnt-work)
 
 ---
 
-## Quick start (live data)
+## Requirements
 
-This is the real system: it connects to Interactive Brokers, classifies every
-trade tick-by-tick as it happens, and builds the CVD / Level-2 view from that
-live feed. Requires accounts:
+**Everything in this table marked _required_ is needed for both run paths
+below.** The dashboard never reads data files directly — it reads a local
+**MongoDB**, which is what the collector (or the bundled dataset loader) fills.
+That is the single most common reason a fresh clone shows an empty chart.
 
-| Requirement | Why |
-|---|---|
-| **IBKR account + IB Gateway / TWS** running and logged in, API enabled on port 7497 | tick-by-tick trades and quotes |
-| **Market-data subscription** (e.g. Nasdaq TotalView for depth) | without it, depth requests fail and quotes are delayed |
-| **FinViz Elite account** | consolidated 1-minute bars, used to scale the thin tick-stream volume to real traded volume |
+| | Requirement | Notes |
+|---|---|---|
+| **required** | **Python 3.11 – 3.14** | Verified on 3.12.4. Check with `python3 -V`. On 3.10 or older the install fails — see [When it doesn't work](#when-it-doesnt-work). |
+| **required** | **MongoDB running on `localhost:27017`** | Stores every candle tier, raw tick and L2 snapshot. Nothing works without it. |
+| live only | **IBKR account + IB Gateway or TWS**, logged in, API enabled | Source of tick-by-tick trades and quotes. |
+| live only | **Market-data subscription** (e.g. Nasdaq TotalView) | Without it, depth requests fail (`error 309`) and quotes are delayed. |
+| optional | **FinViz Elite account** | Consolidated 1-minute bars, used to scale the thin tick-stream volume to real traded volume. The app runs without it; only FinViz-sourced bars are unavailable. |
+
+**IB Gateway / TWS port.** The collector defaults to **7497 = TWS paper**. The
+other ports are **IB Gateway paper 4002**, TWS live 7496, Gateway live 4001. If
+you run IB **Gateway** with its defaults, you must pass the port explicitly or
+the collector will never connect:
 
 ```bash
+python -m ibkr.dynamic_collector --port 4002
+```
+
+---
+
+## Install
+
+Common to both run paths.
+
+```bash
+# 1) MongoDB — install and start it (once)
+#    macOS:  brew tap mongodb/brew && brew install mongodb-community
+#            brew services start mongodb-community
+#    Ubuntu: sudo apt install -y mongodb && sudo systemctl start mongodb
+#    Docker: docker run -d -p 27017:27017 --name mongo mongo:7
+
+# 2) Verify it is actually up — this must print { ok: 1 }
+mongosh --quiet --eval 'db.adminCommand({ping:1})'
+
+# 3) The code
 git clone <this-repo-url>
 cd tradingCVDBubble
 
 python3 -m venv venv_main
 ./venv_main/bin/pip install -r requirements.txt
+```
 
-cp .env.example .env                 # then fill in FINVIZ_USERNAME / FINVIZ_PASSWORD
+> **Windows:** the paths above are POSIX. Use `venv_main\Scripts\pip` and
+> `venv_main\Scripts\python`, and run the two processes by hand — `start_all.sh`
+> and `stop_all.sh` are bash scripts using macOS/Linux tools (`caffeinate`,
+> `pkill`) and will not run on Windows.
+
+### Credentials (`.env` and `finviz/api_keys.py`)
+
+Only needed for the FinViz feed. **Skip this whole section if you don't have a
+FinViz Elite account** — the dashboard runs fine without it.
+
+There are two files, and they are *not* interchangeable:
+
+| File | Holds | Created by |
+|---|---|---|
+| `.env` | `FINVIZ_USERNAME`, `FINVIZ_PASSWORD` | you: `cp .env.example .env`, then edit |
+| `finviz/api_keys.py` | `FINVIZ_AUTH_TOKEN` | **auto-created** on first run |
+
+`finviz/api_keys.py` is **gitignored and therefore absent from every clone** —
+it is generated state, not source, because `finviz/finviz_curl.py` rewrites it
+in place each time the token is renewed. It is now created automatically (empty)
+by `start_all.sh` and on first import of `finviz.new_finviz`, so you never have
+to make it by hand. To fill in the token, either paste it into that file or let
+the login flow fetch one for you:
+
+```bash
+python -m finviz.finviz_curl          # logs in with .env, writes the token
+```
+
+An empty token is a supported state: the app logs `FinViz backfill skipped` and
+carries on with IBKR data.
+
+---
+
+## Run it (A): live data
+
+The real system: it connects to Interactive Brokers, classifies every trade
+tick-by-tick as it happens, and builds the CVD / Level-2 view from that live
+feed. Needs the IBKR rows in [Requirements](#requirements).
+
+```bash
 ./start_all.sh                       # collector + dashboard
 ./stop_all.sh                        # stop both
 ```
 
-`start_all.sh` picks its interpreter from `$PYTHON`, then an active virtualenv,
-then `./venv_main`, then `python3` on PATH — override with
+`start_all.sh` checks MongoDB first and refuses to start with a clear message if
+it is unreachable. It picks its interpreter from `$PYTHON`, then an active
+virtualenv, then `./venv_main`, then `python3` on PATH — override with
 `PYTHON=/path/to/python ./start_all.sh`.
 
 The whole live system is **two processes**:
@@ -65,49 +135,50 @@ The whole live system is **two processes**:
 Open <http://127.0.0.1:8050>, search a ticker (e.g. **NVDA**), and it starts
 collecting and charting from the live feed.
 
+> **A brand-new ticker starts empty.** The collector only has data from the
+> moment you search it, and the 1-second backfill takes up to a minute. Outside
+> market hours a freshly searched ticker may stay near-empty — that is expected,
+> not a failure.
+
 ---
 
-## Demo mode (optional, no broker account)
+## Run it (B): bundled dataset, no accounts needed
 
-The dashboard reads from a local MongoDB, which the live collector above fills.
-If you don't have an IBKR / FinViz account handy — e.g. reviewing this repo
-without setting one up — a **real slice of the project's own data is bundled in
-`demo_data/`** (NVDA, trading day 2026-07-22: tick-classified 1-second bars plus
-the real Level-2 order book), so the same dashboard can be viewed without live
-collection.
+**Use this path if you don't have IBKR / FinViz accounts** — it is the only way
+to see the chart populated without a broker connection, and it needs no
+credentials at all.
 
-**Prerequisites:** Python 3.12+ and a local MongoDB.
+A real slice of the project's own data is bundled in `demo_data/` (NVDA, trading
+day **2026-07-22**: tick-classified 1-second bars plus the real Level-2 order
+book), so the same dashboard renders from it.
 
 ```bash
-# 0) MongoDB — install and start it (once)
-#    macOS:  brew tap mongodb/brew && brew install mongodb-community
-#            brew services start mongodb-community
-#    Ubuntu: sudo apt install mongodb && sudo systemctl start mongodb
-#    Docker: docker run -d -p 27017:27017 --name mongo mongo:7
-
-git clone <this-repo-url>
-cd tradingCVDBubble
-
-python3 -m venv venv_main
-./venv_main/bin/pip install -r requirements-demo.txt
-
-./venv_main/bin/python -m scripts.demo_dataset load   # ~4 s, loads demo_data/
-./venv_main/bin/python -m app                         # starts the dashboard
+./venv_main/bin/pip install -r requirements-demo.txt   # shorter list; optional
+./venv_main/bin/python -m scripts.demo_dataset load    # ~4 s, loads demo_data/
+./venv_main/bin/python -m app                          # starts the dashboard
 ```
 
-Open **<http://127.0.0.1:8050>** and:
+Open **<http://127.0.0.1:8050>** and, **in this order**:
 
-1. Type **`NVDA`** in the ticker box.
-2. Set **Data source → Tick (IBKR)** and **Active Timeframe → 1min**.
+1. Type **`NVDA`** into **Search Ticker** and press Enter.
+2. Leave **Base Data Source** on **`Tiered: IBKR ticks + history (default)`**.
 3. Type **`2026-07-22 10:00`** into **Jump to (ET)** and press **Jump**.
-4. Turn **L2 Depth** to **20 levels** to bring up the order-book heatmap and the
+4. Set **Active Timeframe** to **`1min`**.
+5. Set **L2 Depth** to **`20 levels`** for the order-book heatmap and the
    support/resistance lines.
 
 You should see candles with no background shading (real tick data), the three
-CVD lines, Z-Score bubbles, and the depth heatmap behind the candles.
+CVD lines, Z-Score bubbles, and the depth heatmap behind the candles. The chart
+title reads `NVDA — 1min (Source: ibkr_tick 84% + finviz 16%)`.
 
-> `requirements-demo.txt` is the short list needed to *view* data. Use the full
-> `requirements.txt` for live collection (above) or the research scripts.
+> **Step 3 is not optional.** The dataset is a fixed historical day, so the
+> default "live" view lands on a date range the bundle does not cover and the
+> chart is legitimately empty until you jump. This is the single most common
+> reason demo mode looks broken.
+
+> `requirements-demo.txt` is the short list needed only to *view* data (no
+> broker library, no scraping stack). The full `requirements.txt` from
+> [Install](#install) already covers it.
 
 ---
 
@@ -301,23 +372,71 @@ clear what still needs attention.
    not listed by FinViz could be misflagged.
 8. **After restarting the app/server, hard-refresh the browser** — a stale Dash
    callback spec otherwise leaves requests stalled.
-9. **Demo mode covers one ticker and one day.** `demo_data/` holds NVDA around
-   2026-07-22 only; other tickers or dates render empty until live collection
-   fills them in.
+9. **The bundled dataset covers one ticker and one day.** `demo_data/` holds
+   NVDA around 2026-07-22 only; other tickers or dates render empty until live
+   collection fills them in.
+10. **All state lives in MongoDB, outside the repo.** Copying or re-cloning the
+    project directory carries no data with it, and two checkouts on the same
+    machine share one database — so a copy can look like it "works" purely
+    because the original's collected data is still in Mongo. On a new machine
+    the database starts empty and the chart is blank until you load the bundled
+    dataset or run the collector.
+11. **The FinViz token is generated state.** `finviz/api_keys.py` is rewritten
+    by `finviz_curl.py` and gitignored, so it never travels with a clone. It is
+    auto-created empty now, but a clone can never inherit a working token.
 
 ---
 
-## Troubleshooting
+## When it doesn't work
+
+### First: the 30-second sanity check
+
+Run these four. They isolate almost every setup failure:
+
+```bash
+python3 -V                                              # must be 3.11 - 3.14
+mongosh --quiet --eval 'db.adminCommand({ping:1})'      # must print { ok: 1 }
+./venv_main/bin/python -c "import dash, pandas, numpy, pymongo; print('deps OK')"
+./venv_main/bin/python -c "from pymongo import MongoClient; print('bars in DB:', MongoClient('mongodb://localhost:27017/')['finviz_db']['candles'].count_documents({}))"
+```
+
+If the last one prints `0`, the database is empty — the app has nothing to draw.
+That is not a crash; load the bundled dataset
+([Run it B](#run-it-b-bundled-dataset-no-accounts-needed)) or run the collector.
+
+### Install-time failures
 
 | Symptom | Cause / fix |
 |---|---|
-| `ModuleNotFoundError: dash` | dependencies not installed — `pip install -r requirements-demo.txt` |
-| `ServerSelectionTimeoutError` on start | MongoDB is not running — start it (`brew services start mongodb-community`) |
-| Chart is empty in demo mode | the demo data was not loaded — run `python -m scripts.demo_dataset load`, and make sure the ticker is **NVDA** and you jumped to **2026-07-22** |
-| No L2 heatmap | set **L2 Depth** to 10/20/Full, and check you are inside the demo day's time range |
-| Chart stalls after restarting the app | hard-refresh the browser (stale Dash callback spec) |
-| Live mode: `error 309 / not subscribed` | the IBKR account lacks a market-depth subscription |
-| Live mode: nothing is collected | IB Gateway must be logged in with the API enabled on port 7497 |
+| `ERROR: ResolutionImpossible` or `Cannot install -r requirements.txt` | **Python too new.** Older revisions of this repo pinned `numpy==1.26.4`, which has no wheels past Python 3.12, so 3.13+ could not resolve. Fixed — dependencies are now version floors. If you hit it on an old copy, use Python 3.12 or take the current `requirements.txt`. |
+| `No matching distribution found for pandas==3.0.2` | **Python too old** (e.g. macOS's built-in `/usr/bin/python3`, which is 3.9). Use 3.11–3.14: `brew install python@3.12`, or pyenv. |
+| `ModuleNotFoundError: No module named 'dash'` | Dependencies not installed, or installed into a *different* interpreter than the one running the app. Check `which python3` matches the venv you installed into. Older revisions of this repo also omitted `dash` from `requirements.txt` entirely — take the current file. |
+| Compiler errors building numpy/pandas from source | Same root cause as row 1: pip fell back to a source build because no wheel matched your Python. Fix the Python version rather than installing a compiler. |
+
+### Startup / runtime failures
+
+| Symptom | Cause / fix |
+|---|---|
+| `ServerSelectionTimeoutError`, or every chart request stalls ~30 s then errors | **MongoDB is not running.** `brew services start mongodb-community` (macOS) or `docker start mongo`. `start_all.sh` now checks this up front and refuses to start. |
+| `start_all.sh` prints `No such file or directory` and nothing starts | An **old copy** with a hardcoded interpreter path (`PY=/Users/<someone>/.pyenv/...`). Current `start_all.sh` resolves the interpreter from `$PYTHON` → active venv → `./venv_main` → `python3`. |
+| Red banner: `⚠ Error fetching NVDA: cannot import name 'get_candle_data' from 'finviz.new_finviz'` | `finviz/api_keys.py` was missing. It is gitignored, so no clone has it. Now auto-created — see [Credentials](#credentials-env-and-finvizapi_keyspy). On an old copy, create the file with `FINVIZ_AUTH_TOKEN = ""`. |
+| Chart is empty, no error | Almost always: empty database, or a time range with no data. In demo mode you **must** jump to `2026-07-22` (step 3). |
+| `Address already in use` on port 8050 | Another instance is running. `./stop_all.sh`, or `PORT=8051 python -m app`. |
+| Chart stalls after restarting the app | Hard-refresh the browser — a stale Dash callback spec leaves requests pending. |
+| No L2 heatmap | Set **L2 Depth** to 10 / 20 / Full, and check you are inside a time range that has depth snapshots. |
+| `./start_all.sh: command not found` / `Permission denied` | `chmod +x start_all.sh stop_all.sh`, and run it as `./start_all.sh` (not `start_all.sh`). |
+| Nothing works on Windows | The shell scripts are macOS/Linux only. Start the two processes manually — see the Windows note under [Install](#install). |
+
+### Live-mode (IBKR) failures
+
+| Symptom | Cause / fix |
+|---|---|
+| Nothing is collected, collector log shows no connection | IB Gateway / TWS must be logged in with the API enabled, **and the port must match**: Gateway paper is **4002**, not 7497. `python -m ibkr.dynamic_collector --port 4002`. |
+| `error 309 / not subscribed` | The IBKR account lacks a market-depth subscription (e.g. Nasdaq TotalView). Depth is unavailable; the rest still works. |
+| `error 10189 — requested market data is not subscribed` | Real-time market-data permission is missing or was lost (it can drop when the account session changes). Re-check the subscription in Account Management. |
+| `clientId already in use` / collector keeps disconnecting | Two collectors are running. Run `./stop_all.sh` before `./start_all.sh`. |
+| Data only appears for the ticker you searched | By design — collection is on demand, most-recent 5 tickers (3 for depth). |
+| A ticker searched outside market hours stays empty | Expected: there are no live ticks, and the 1-second backfill is thin outside regular hours. |
 
 ---
 

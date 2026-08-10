@@ -1,39 +1,48 @@
 # Install with:  pip install -r requirements.txt
-# Tested on Python 3.12.4 (macOS). Versions below are the ones this project was
-# developed and verified against; newer patch releases should be fine.
+#
+# Python 3.11 – 3.14. Developed and verified on 3.12.4 (macOS).
+#
+# These are FLOORS (>=), not exact pins, on purpose. Exact pins used to make the
+# repo uninstallable on any Python other than the developer's: numpy==1.26.4 has
+# no wheels past 3.12, so on 3.13+ pip either tried to compile it from source or
+# failed outright with ResolutionImpossible, and on 3.10 or older pandas==3.0.2
+# does not exist at all. The floors below are the oldest releases this code is
+# known to work against; newer ones are expected to be fine.
 #
 # NOTE on plotly: the chart JS in cvd/visualizer.py depends on plotly 6.x
 # behaviour (numeric arrays serialize as base64 typed arrays, so client-side
 # code reads gd._fullData[i].y rather than gd.data[i].y). Do not downgrade to 5.x.
+#
+# NOTE on dash: the app uses the Dash 4 callback API. Do not downgrade to 3.x.
 
 # ── Core: required to run the dashboard (python -m app) ──────────────────────
-dash==4.4.0                       # web framework for the dashboard
-dash-bootstrap-components==2.0.4  # CYBORG dark theme + layout components
-plotly==6.8.0                     # candlestick / heatmap / CVD chart rendering
-pandas==3.0.2                     # bar frames, resampling, rollups
-numpy==1.26.4                     # vectorized CVD / BVC / aggressor math
-pymongo==4.17.0                   # MongoDB driver (candles, ticks, L2 snapshots)
-tzdata==2025.3                    # IANA tz database for zoneinfo (ET conversion)
+dash>=4.0,<5                      # web framework for the dashboard
+dash-bootstrap-components>=2.0    # CYBORG dark theme + layout components
+plotly>=6.0,<7                    # candlestick / heatmap / CVD chart rendering
+pandas>=2.2                       # bar frames, resampling, rollups
+numpy>=1.26                       # vectorized CVD / BVC / aggressor math
+pymongo>=4.9                      # MongoDB driver (candles, ticks, L2 snapshots)
+tzdata>=2024.1                    # IANA tz database for zoneinfo (ET conversion)
 
 # ── Live data collection: required only for the IBKR collector ───────────────
 # ib_async is the maintained fork of ib_insync (original author deceased).
 # Needs IB Gateway or TWS running locally; a paper account works for dev.
-ib_async==2.1.0
+ib_async>=2.0
 
 # ── FinViz Elite feed: required only to fetch consolidated bars / refresh token
-requests==2.33.1
-curl_cffi==0.15.0        # browser-impersonating client used by the token refresh
-beautifulsoup4==4.15.0   # parses the FinViz login page for the auth token
-python-dotenv==1.0.1     # reads FINVIZ_USERNAME / FINVIZ_PASSWORD from .env
+requests>=2.32
+curl_cffi>=0.7          # browser-impersonating client used by the token refresh
+beautifulsoup4>=4.12    # parses the FinViz login page for the auth token
+python-dotenv>=1.0      # reads FINVIZ_USERNAME / FINVIZ_PASSWORD from .env
 
 # ── Research / validation scripts only (scripts/*.py) ────────────────────────
-matplotlib==3.11.0       # coverage_and_latency.py and other report plots
+matplotlib>=3.8         # coverage_and_latency.py and other report plots
 
 # ── Legacy, not used by the running system ───────────────────────────────────
 # The TradingView/ folder is the abandoned pre-IBKR scraping path (dropped
 # 2026-06-28) and finviz/finviz_selenium.py is a superseded token-refresh route.
 # Uncomment only if you intend to run those files.
-# selenium==4.44.0
-# webdriver-manager==4.1.2
+# selenium
+# webdriver-manager
 # rookiepy
 # tradingview-screener

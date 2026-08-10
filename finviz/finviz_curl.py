@@ -52,13 +52,19 @@ def get_token(session: curl_requests.Session) -> str:
 
 
 def update_api_keys(token: str):
-    """Update FINVIZ_AUTH_TOKEN in api_keys.py."""
-    content = API_KEYS_PATH.read_text()
-    new_content = re.sub(
+    """Update FINVIZ_AUTH_TOKEN in api_keys.py, creating the file if needed.
+
+    api_keys.py is gitignored (this script rewrites it), so on a fresh clone it
+    may not exist yet — read_text() alone would raise FileNotFoundError here.
+    """
+    content = API_KEYS_PATH.read_text() if API_KEYS_PATH.exists() else 'FINVIZ_AUTH_TOKEN = ""\n'
+    new_content, n = re.subn(
         r'FINVIZ_AUTH_TOKEN\s*=\s*".*?"',
         f'FINVIZ_AUTH_TOKEN = "{token}"',
         content
     )
+    if n == 0:                      # file exists but has no token line — append one
+        new_content = content.rstrip("\n") + f'\nFINVIZ_AUTH_TOKEN = "{token}"\n'
     API_KEYS_PATH.write_text(new_content)
     print(f"✅ api_keys.py updated with new token: {token}")
 

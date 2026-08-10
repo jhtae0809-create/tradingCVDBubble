@@ -2,6 +2,29 @@ import requests
 import csv
 import io
 import importlib
+from pathlib import Path
+
+# finviz/api_keys.py holds the FinViz Elite auth token. It is deliberately NOT
+# in git (see .gitignore): finviz_curl.py rewrites the file in place every time
+# the token is renewed, so it is generated state, not source. The consequence is
+# that a FRESH CLONE HAS NO api_keys.py — and this module used to fail to import
+# entirely because of it, which surfaced in the dashboard as a red
+# "Error fetching <TICKER>: cannot import name 'get_candle_data'" banner with no
+# chart at all. Create a placeholder on first import instead, so a clone runs
+# out of the box and FinViz simply reports itself as unconfigured.
+_API_KEYS_PATH = Path(__file__).parent / "api_keys.py"
+if not _API_KEYS_PATH.exists():
+    _API_KEYS_PATH.write_text(
+        '# Auto-generated on first import — holds the FinViz Elite API token.\n'
+        '# This file is gitignored because finviz_curl.py rewrites it whenever\n'
+        '# the token is renewed. To fill it in, either paste your token below or\n'
+        '# run:  python -m finviz.finviz_curl\n'
+        '# (which needs FINVIZ_USERNAME / FINVIZ_PASSWORD in .env).\n'
+        '# Leaving it empty is fine: the dashboard runs without FinViz, it just\n'
+        '# cannot fetch consolidated bars.\n'
+        'FINVIZ_AUTH_TOKEN = ""\n'
+    )
+
 from . import api_keys
 from pymongo import MongoClient, UpdateOne
 
@@ -13,25 +36,45 @@ collection = db["candles"]
 # Index the upsert key. Without it, every upsert in save_candles_to_mongo does a
 # full collection scan, so re-saving ~22k bars each loop was O(n^2) (~80s); with
 # the index it's ~0.7s. create_index is idempotent (no-op if it already exists).
-collection.create_index(
-    [("ticker", 1), ("timeframe", 1), ("date", 1)],
-    unique=True, name="ticker_tf_date",
-)
+try:
+    collection.create_index(
+        [("ticker", 1), ("timeframe", 1), ("date", 1)],
+        unique=True, name="ticker_tf_date",
+    )
+except Exception as _index_err:
+    # Importing this module must not hard-fail (with a 30s server-selection
+    # hang) just because MongoDB isn't up — say so plainly and let the caller
+    # hit a clearer error at query time. A missing index only costs speed.
+    print(f"[MongoDB] could not create the candles index: {_index_err}\n"
+          f"[MongoDB] is mongod running on localhost:27017?")
 
 BASE_URL = "https://elite.finviz.com/quote_export"
 session = requests.Session()
 
 
-class FinvizTokenError(Exception):
-    """Raised when FinViz rejects the auth token (HTTP 401/403)."""
-    pass
+# Re-exported so existing `from finviz.new_finviz import FinvizTokenError`
+# imports keep working; the definitions live in finviz/errors.py so the app can
+# import them without pulling in this module's MongoDB connection.
+from .errors import FinvizTokenError, FinvizNotConfigured   # noqa: E402,F401
+
+
+def _token() -> str:
+    """Current FinViz token, re-read from disk so a renewed token takes effect
+    without restarting the process. Raises FinvizNotConfigured if unset."""
+    importlib.reload(api_keys)
+    token = (getattr(api_keys, "FINVIZ_AUTH_TOKEN", "") or "").strip()
+    if not token or token.startswith("Example"):
+        raise FinvizNotConfigured(
+            "no FinViz token — set FINVIZ_AUTH_TOKEN in finviz/api_keys.py, or "
+            "run 'python -m finviz.finviz_curl' with FINVIZ_USERNAME / "
+            "FINVIZ_PASSWORD in .env. The dashboard works without it; only "
+            "consolidated FinViz bars are unavailable."
+        )
+    return token
 
 
 def get_candle_data(ticker: str, timeframe: str = 'd') -> list[dict]:
-    # Re-read token from disk each call so a regenerated token takes effect
-    # without restarting the process.
-    importlib.reload(api_keys)
-    url = f"{BASE_URL}?t={ticker}&p={timeframe}&auth={api_keys.FINVIZ_AUTH_TOKEN}"
+    url = f"{BASE_URL}?t={ticker}&p={timeframe}&auth={_token()}"
     response = session.get(url)
 
     # 401/403 = the token is wrong/expired → signal the caller to regenerate it.
@@ -80,10 +123,11 @@ def symbol_exists(ticker: str) -> bool:
     caller can safely cache the verdict, since a False here is always a stable
     "symbol not found", never a passing outage.
     """
-    importlib.reload(api_keys)
-    url = f"{BASE_URL}?t={ticker}&p=d&auth={api_keys.FINVIZ_AUTH_TOKEN}"
     try:
+        url = f"{BASE_URL}?t={ticker}&p=d&auth={_token()}"
         r = session.get(url, timeout=8)
+    except FinvizNotConfigured:
+        return True                       # can't probe without a token → assume valid
     except Exception:
         return True                       # transient network issue, not the symbol
     if r.status_code in (400, 404):
