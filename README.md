@@ -69,28 +69,51 @@ API enabled? port match? 127.0.0.1 trusted?) instead of a bare connection error.
 
 Common to both run paths.
 
+**1) MongoDB — install and start it (once).**
+
+| | |
+|---|---|
+| macOS | `brew tap mongodb/brew && brew install mongodb-community`<br>`brew services start mongodb-community` |
+| Windows | Installer (recommended): <https://www.mongodb.com/try/download/community> — keep **"Install MongoDB as a Service"** ticked, which is the default, so it starts on boot.<br>Or: `winget install MongoDB.Server` |
+| Ubuntu | `sudo apt install -y mongodb && sudo systemctl start mongodb` |
+| Docker | `docker run -d -p 27017:27017 --name mongo mongo:7` |
+
+Verify it is actually up — this must print `{ ok: 1 }`:
+
 ```bash
-# 1) MongoDB — install and start it (once)
-#    macOS:  brew tap mongodb/brew && brew install mongodb-community
-#            brew services start mongodb-community
-#    Ubuntu: sudo apt install -y mongodb && sudo systemctl start mongodb
-#    Docker: docker run -d -p 27017:27017 --name mongo mongo:7
+mongosh --quiet --eval "db.adminCommand({ping:1})"
+```
 
-# 2) Verify it is actually up — this must print { ok: 1 }
-mongosh --quiet --eval 'db.adminCommand({ping:1})'
+> On Windows `mongosh` is a **separate download** ([MongoDB Shell]) and is not
+> always on `PATH`. If the command is not found, skip it — `start_all.py` checks
+> the connection itself and tells you if it cannot reach the database.
 
-# 3) The code
+[MongoDB Shell]: https://www.mongodb.com/try/download/shell
+
+**2) The code.**
+
+```bash
 git clone <this-repo-url>
 cd tradingCVDBubble
+```
 
+**macOS / Linux:**
+
+```bash
 python3 -m venv venv_main
 ./venv_main/bin/pip install -r requirements.txt
 ```
 
-> **Windows:** the paths above are POSIX. Use `venv_main\Scripts\pip` and
-> `venv_main\Scripts\python`, and run the two processes by hand — `start_all.sh`
-> and `stop_all.sh` are bash scripts using macOS/Linux tools (`caffeinate`,
-> `pkill`) and will not run on Windows.
+**Windows** (PowerShell or `cmd`) — the venv layout differs, `Scripts\` instead
+of `bin/`:
+
+```
+py -3.12 -m venv venv_main
+venv_main\Scripts\pip install -r requirements.txt
+```
+
+If `py` is not available, use `python` instead. Confirm the version first with
+`python -V` — it must be 3.11–3.14.
 
 ### Credentials (`.env` and `finviz/api_keys.py`)
 
@@ -107,7 +130,7 @@ There are two files, and they are *not* interchangeable:
 `finviz/api_keys.py` is **gitignored and therefore absent from every clone** —
 it is generated state, not source, because `finviz/finviz_curl.py` rewrites it
 in place each time the token is renewed. It is now created automatically (empty)
-by `start_all.sh` and on first import of `finviz.new_finviz`, so you never have
+by `start_all.py` and on first import of `finviz.new_finviz`, so you never have
 to make it by hand. To fill in the token, either paste it into that file or let
 the login flow fetch one for you:
 
@@ -126,15 +149,32 @@ The real system: it connects to Interactive Brokers, classifies every trade
 tick-by-tick as it happens, and builds the CVD / Level-2 view from that live
 feed. Needs the IBKR rows in [Requirements](#requirements).
 
+**Works the same on macOS, Linux and Windows** — the launcher is plain Python:
+
 ```bash
-./start_all.sh                       # collector + dashboard
-./stop_all.sh                        # stop both
+python start_all.py                  # collector + dashboard
+python stop_all.py                   # stop both
 ```
 
-`start_all.sh` checks MongoDB first and refuses to start with a clear message if
-it is unreachable. It picks its interpreter from `$PYTHON`, then an active
-virtualenv, then `./venv_main`, then `python3` on PATH — override with
-`PYTHON=/path/to/python ./start_all.sh`.
+Use the venv's interpreter (`./venv_main/bin/python` on macOS/Linux,
+`venv_main\Scripts\python` on Windows) or activate the venv first — the launcher
+starts both processes with **whatever interpreter runs it**, so that is the one
+that needs the dependencies. It tells you if any are missing.
+
+On macOS/Linux `./start_all.sh` and `./stop_all.sh` still work; they are thin
+wrappers that locate an interpreter (`$PYTHON` → active venv → `./venv_main` →
+`python3`) and hand off to the Python launcher, so there is one implementation.
+
+Before starting anything, the launcher:
+
+- checks the Python version and that the dependencies are importable;
+- checks **MongoDB** is reachable, and prints platform-specific install
+  instructions if not, instead of letting every chart request stall ~30 s;
+- creates `finviz/api_keys.py` if missing;
+- refuses to start a **second** collector — a duplicate would reuse clientId 40
+  and the two IB connections would fight over it. It detects both processes it
+  started itself (via `.run_pids.json`) and, on macOS/Linux, any left running by
+  hand.
 
 The whole live system is **two processes**:
 
@@ -166,10 +206,14 @@ day **2026-07-22**: tick-classified 1-second bars plus the real Level-2 order
 book), so the same dashboard renders from it.
 
 ```bash
-./venv_main/bin/pip install -r requirements-demo.txt   # shorter list; optional
-./venv_main/bin/python -m scripts.demo_dataset load    # ~4 s, loads demo_data/
-./venv_main/bin/python -m app                          # starts the dashboard
+pip install -r requirements-demo.txt    # shorter list; optional
+python -m scripts.demo_dataset load     # ~4 s, loads demo_data/
+python -m app                           # starts the dashboard
 ```
+
+> Run these with the venv's interpreter: prefix `./venv_main/bin/` on
+> macOS/Linux or `venv_main\Scripts\` on Windows, or activate the venv first
+> (`source venv_main/bin/activate` / `venv_main\Scripts\activate`).
 
 Open **<http://127.0.0.1:8050>** and, **in this order**:
 
@@ -200,7 +244,8 @@ title reads `NVDA — 1min (Source: ibkr_tick 84% + finviz 16%)`.
 ```
 tradingCVDBubble/
 ├── app.py                  THE DASHBOARD. Dash app + all UI callbacks (port 8050)
-├── start_all.sh            starts collector + dashboard;  stop_all.sh stops them
+├── start_all.py            starts collector + dashboard;  stop_all.py stops them
+│                        (cross-platform; the .sh wrappers just call these)
 │
 ├── ibkr/                   DATA COLLECTION from Interactive Brokers
 │   ├── dynamic_collector.py  the one collector that is actually run: ticks,
@@ -406,12 +451,18 @@ clear what still needs attention.
 
 Run these four. They isolate almost every setup failure:
 
+Run them with the venv's interpreter (`./venv_main/bin/python`, or
+`venv_main\Scripts\python` on Windows) — shown here as `python`:
+
 ```bash
-python3 -V                                              # must be 3.11 - 3.14
-mongosh --quiet --eval 'db.adminCommand({ping:1})'      # must print { ok: 1 }
-./venv_main/bin/python -c "import dash, pandas, numpy, pymongo; print('deps OK')"
-./venv_main/bin/python -c "from pymongo import MongoClient; print('bars in DB:', MongoClient('mongodb://localhost:27017/')['finviz_db']['candles'].count_documents({}))"
+python -V                                             # must be 3.11 - 3.14
+python -c "import dash, pandas, numpy, pymongo; print('deps OK')"
+python -c "from pymongo import MongoClient; print('mongo:', MongoClient('mongodb://localhost:27017/', serverSelectionTimeoutMS=3000).admin.command('ping'))"
+python -c "from pymongo import MongoClient; print('bars in DB:', MongoClient('mongodb://localhost:27017/')['finviz_db']['candles'].count_documents({}))"
 ```
+
+(The MongoDB checks use `pymongo` rather than `mongosh` so they work even where
+the shell is not installed — notably on Windows.)
 
 If the last one prints `0`, the database is empty — the app has nothing to draw.
 That is not a crash; load the bundled dataset
@@ -430,15 +481,15 @@ That is not a crash; load the bundled dataset
 
 | Symptom | Cause / fix |
 |---|---|
-| `ServerSelectionTimeoutError`, or every chart request stalls ~30 s then errors | **MongoDB is not running.** `brew services start mongodb-community` (macOS) or `docker start mongo`. `start_all.sh` now checks this up front and refuses to start. |
+| `ServerSelectionTimeoutError`, or every chart request stalls ~30 s then errors | **MongoDB is not running.** `brew services start mongodb-community` (macOS) or `docker start mongo`. `start_all.py` checks this up front and refuses to start. |
 | `start_all.sh` prints `No such file or directory` and nothing starts | An **old copy** with a hardcoded interpreter path (`PY=/Users/<someone>/.pyenv/...`). Current `start_all.sh` resolves the interpreter from `$PYTHON` → active venv → `./venv_main` → `python3`. |
 | Red banner: `⚠ Error fetching NVDA: cannot import name 'get_candle_data' from 'finviz.new_finviz'` | `finviz/api_keys.py` was missing. It is gitignored, so no clone has it. Now auto-created — see [Credentials](#credentials-env-and-finvizapi_keyspy). On an old copy, create the file with `FINVIZ_AUTH_TOKEN = ""`. |
 | Chart is empty, no error | Almost always: empty database, or a time range with no data. In demo mode you **must** jump to `2026-07-22` (step 3). |
-| `Address already in use` on port 8050 | Another instance is running. `./stop_all.sh`, or `PORT=8051 python -m app`. |
+| `Address already in use` on port 8050 | Another instance is running. `python stop_all.py`, or `PORT=8051 python -m app`. |
 | Chart stalls after restarting the app | Hard-refresh the browser — a stale Dash callback spec leaves requests pending. |
 | No L2 heatmap | Set **L2 Depth** to 10 / 20 / Full, and check you are inside a time range that has depth snapshots. |
-| `./start_all.sh: command not found` / `Permission denied` | `chmod +x start_all.sh stop_all.sh`, and run it as `./start_all.sh` (not `start_all.sh`). |
-| Nothing works on Windows | The shell scripts are macOS/Linux only. Start the two processes manually — see the Windows note under [Install](#install). |
+| `./start_all.sh: command not found` / `Permission denied` | `chmod +x start_all.sh stop_all.sh`, and run it as `./start_all.sh`. Or skip the wrapper entirely: `python start_all.py`. |
+| Nothing works on Windows | Use `python start_all.py` / `python stop_all.py`; the `.sh` wrappers are macOS/Linux only. Remember the venv is `venv_main\Scripts\`, not `venv_main/bin/`. |
 
 ### Live-mode (IBKR) failures
 
@@ -448,7 +499,7 @@ That is not a crash; load the bundled dataset
 | Collector connects but to the wrong instance (e.g. paper when you wanted live) | Both were listening and the probe took the first. Pin it: `python -m ibkr.dynamic_collector --port 7496`. |
 | `error 309 / not subscribed` | The IBKR account lacks a market-depth subscription (e.g. Nasdaq TotalView). Depth is unavailable; the rest still works. |
 | `error 10189 — requested market data is not subscribed` | Real-time market-data permission is missing or was lost (it can drop when the account session changes). Re-check the subscription in Account Management. |
-| `clientId already in use` / collector keeps disconnecting | Two collectors are running. Run `./stop_all.sh` before `./start_all.sh`. |
+| `clientId already in use` / collector keeps disconnecting | Two collectors are running. `python stop_all.py`, then `python start_all.py` (which now refuses to start a duplicate). |
 | Data only appears for the ticker you searched | By design — collection is on demand, most-recent 5 tickers (3 for depth). |
 | A ticker searched outside market hours stays empty | Expected: there are no live ticks, and the 1-second backfill is thin outside regular hours. |
 

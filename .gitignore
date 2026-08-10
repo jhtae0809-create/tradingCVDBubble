@@ -28,6 +28,8 @@ chart.html
 CLAUDE.md
 .claude/
 claude/
+# pids of the processes started by start_all.py (per-machine runtime state)
+.run_pids.json
 # runtime logs (including RotatingFileHandler backups: logs_app.log.1, .2, ...)
 logs_*.log
 logs_*.log.*
