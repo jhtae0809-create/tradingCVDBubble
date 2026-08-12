@@ -115,7 +115,8 @@ def bootstrap_api_keys() -> None:
         "# To fill it in: paste your token below, or run\n"
         "#     python -m finviz.finviz_curl\n"
         "# (needs FINVIZ_USERNAME / FINVIZ_PASSWORD in .env).\n"
-        'FINVIZ_AUTH_TOKEN = ""\n'
+        'FINVIZ_AUTH_TOKEN = ""\n',
+        encoding="utf-8",
     )
     print("  created finviz/api_keys.py (empty token — FinViz bars disabled)")
 
@@ -186,6 +187,14 @@ def spawn(args: list[str], logfile: Path, keep_awake: bool) -> int:
     if keep_awake and sys.platform == "darwin":
         cmd = ["caffeinate", "-i", *cmd]
 
+    # Force UTF-8 for the child's stdout/stderr. Both processes log arrows, box
+    # characters and em dashes, and on Windows a redirected stdout defaults to
+    # the ANSI codepage (cp1252 on an English install, cp949 on a Korean one),
+    # neither of which can encode them: print() then raises UnicodeEncodeError
+    # and logging drops the record after dumping a traceback. Python 3.15 turns
+    # UTF-8 mode on by default, but 3.11-3.14 do not, so set it explicitly.
+    env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+
     kwargs: dict = {}
     if IS_WINDOWS:
         # Detach so the processes outlive this console window.
@@ -195,7 +204,8 @@ def spawn(args: list[str], logfile: Path, keep_awake: bool) -> int:
         kwargs["start_new_session"] = True
 
     log = open(logfile, "ab")
-    proc = subprocess.Popen(cmd, cwd=REPO, stdout=log, stderr=subprocess.STDOUT,
+    proc = subprocess.Popen(cmd, cwd=REPO, env=env, stdout=log,
+                            stderr=subprocess.STDOUT,
                             stdin=subprocess.DEVNULL, **kwargs)
     return proc.pid
 

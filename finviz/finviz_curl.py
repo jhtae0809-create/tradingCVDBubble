@@ -26,9 +26,9 @@ def login() -> curl_requests.Session:
     )
 
     if "logout" in response.text.lower() or response.status_code == 200:
-        print("✅ Login successful.")
+        print("OK: Login successful.")
     else:
-        print(f"❌ Login failed. Status: {response.status_code}")
+        print(f"ERROR: Login failed. Status: {response.status_code}")
         raise SystemExit(1)
 
     return session
@@ -44,9 +44,9 @@ def get_token(session: curl_requests.Session) -> str:
     if token_match:
         return token_match.group(1)
 
-    print("❌ Could not find token on account page.")
+    print("ERROR: Could not find token on account page.")
     print("[Debug] Full page HTML saved to debug_page.html")
-    with open("debug_page.html", "w") as f:
+    with open("debug_page.html", "w", encoding="utf-8") as f:
         f.write(response.text)
     raise SystemExit(1)
 
@@ -57,7 +57,7 @@ def update_api_keys(token: str):
     api_keys.py is gitignored (this script rewrites it), so on a fresh clone it
     may not exist yet — read_text() alone would raise FileNotFoundError here.
     """
-    content = API_KEYS_PATH.read_text() if API_KEYS_PATH.exists() else 'FINVIZ_AUTH_TOKEN = ""\n'
+    content = API_KEYS_PATH.read_text(encoding="utf-8") if API_KEYS_PATH.exists() else 'FINVIZ_AUTH_TOKEN = ""\n'
     new_content, n = re.subn(
         r'FINVIZ_AUTH_TOKEN\s*=\s*".*?"',
         f'FINVIZ_AUTH_TOKEN = "{token}"',
@@ -65,12 +65,12 @@ def update_api_keys(token: str):
     )
     if n == 0:                      # file exists but has no token line — append one
         new_content = content.rstrip("\n") + f'\nFINVIZ_AUTH_TOKEN = "{token}"\n'
-    API_KEYS_PATH.write_text(new_content)
-    print(f"✅ api_keys.py updated with new token: {token}")
+    API_KEYS_PATH.write_text(new_content, encoding="utf-8")
+    print(f"OK: api_keys.py updated with new token: {token}")
 
 
 if __name__ == "__main__":
     session = login()
     token   = get_token(session)
     update_api_keys(token)
-    print("🎉 Token regeneration complete!")
+    print("Done: Token regeneration complete!")

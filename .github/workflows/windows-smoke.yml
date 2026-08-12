@@ -1,0 +1,117 @@
+# Runs the project on a real Windows machine.
+#
+# The developer works on macOS, but the people this repo gets handed to run
+# Windows, and every Windows-only failure so far (shell-only launchers, os.kill
+# semantics, the ANSI-codepage encoding crash) was invisible from a Mac. GitHub's
+# windows-latest runner is a genuine Windows box, so this workflow covers
+# everything up to the point where an IBKR login is required.
+#
+# What this CANNOT cover: live IBKR data. The collector needs IB Gateway or TWS
+# logged in with the API enabled, which no CI runner has. Everything else — the
+# install, MongoDB, the preflight checks, importing every module, starting both
+# processes and serving the dashboard — is exercised for real.
+
+name: Windows smoke test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:      # lets you re-run it by hand from the Actions tab
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor and a recent release. requirements.txt claims 3.11-3.14, so
+        # test that the claim actually holds rather than trusting the pins.
+        python-version: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install MongoDB
+        run: choco install mongodb --no-progress -y
+
+      - name: Start MongoDB
+        shell: pwsh
+        run: |
+          $bin = Get-ChildItem "C:\Program Files\MongoDB\Server\*\bin\mongod.exe" |
+                 Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path C:\data\db | Out-Null
+          Start-Process -FilePath $bin.FullName `
+                        -ArgumentList "--dbpath","C:\data\db","--bind_ip","127.0.0.1"
+          # Wait for it rather than sleeping a fixed amount.
+          for ($i = 0; $i -lt 30; $i++) {
+            if ((Test-NetConnection -ComputerName 127.0.0.1 -Port 27017 `
+                  -InformationLevel Quiet -WarningAction SilentlyContinue)) {
+              Write-Host "mongod is listening"; exit 0
+            }
+            Start-Sleep -Seconds 2
+          }
+          Write-Error "mongod never came up"; exit 1
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Import every module the live path uses
+        shell: pwsh
+        run: |
+          # Catches Windows-only import errors (path separators, POSIX-only
+          # modules) before anything is started. Run under the ANSI codepage
+          # with output redirected to a file, which is exactly the situation
+          # that used to raise UnicodeEncodeError on the arrows and box
+          # characters these modules log.
+          chcp 1252
+          python ci\import_check.py *> import.log
+          $code = $LASTEXITCODE
+          Get-Content import.log
+          exit $code
+        env:
+          # The same environment start_all.py hands its children. Without it a
+          # redirected stdout under codepage 1252 cannot encode this project's
+          # output at all, so this is part of what is being verified.
+          PYTHONUTF8: "1"
+          PYTHONIOENCODING: "utf-8"
+
+      - name: Start both processes
+        shell: pwsh
+        run: python start_all.py
+
+      - name: Dashboard must answer on 8050
+        shell: pwsh
+        run: |
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            try {
+              $r = Invoke-WebRequest -Uri http://127.0.0.1:8050 -UseBasicParsing `
+                                     -TimeoutSec 5
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch { Start-Sleep -Seconds 2 }
+          }
+          if (-not $ok) { Write-Error "dashboard never answered on 8050" }
+          Write-Host "dashboard answered 200"
+
+      - name: Stop both processes
+        shell: pwsh
+        run: python stop_all.py
+
+      - name: Show logs
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($f in "logs_app.log", "logs_collector.log") {
+            if (Test-Path $f) {
+              Write-Host "===== $f ====="
+              Get-Content $f -Tail 80
+            }
+          }
