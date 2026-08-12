@@ -6,7 +6,6 @@ from cvd.visualizer import build_chart, MAX_CANDLES, pie_layout
 from history.schema import SERVE_TIER, SERVE_WINDOW_DAYS
 from history.serve import run_pipeline_tiered, invalidate_cache
 from level2_webapp.data_provider import fetch_and_aggregate_l2_data, compute_support_resistance
-from finviz.errors import FinvizNotConfigured
 import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
@@ -692,6 +691,30 @@ last_finviz_fetch = {}
 last_backfill = {}
 BACKFILL_COOLDOWN_SEC = 120
 
+# Most recent FinViz failure, surfaced in the UI rather than only in the log.
+#
+# FinViz is not an optional garnish: its consolidated 1-minute bars are the
+# reference that scales the tick stream (roughly a tenth of the tape) up to real
+# traded volume. When FinViz is down or unconfigured the chart still draws, so
+# nothing LOOKS wrong — but every volume and CVD figure on it is several times
+# too small. A silent failure therefore presents wrong numbers as if they were
+# right, which is worse than showing no chart at all.
+#
+# Recorded by every call site, including the background refresh thread, and read
+# when the status line is built. Plain assignment under the GIL is enough here;
+# the value is advisory and read-mostly.
+_finviz_error: str | None = None
+
+
+def _note_finviz_error(exc: Exception) -> None:
+    global _finviz_error
+    _finviz_error = str(exc)
+
+
+def _clear_finviz_error() -> None:
+    global _finviz_error
+    _finviz_error = None
+
 # Ticker-validity cache. When a fresh ticker loads empty we probe FinViz once to
 # tell a valid-but-still-backfilling symbol from an unknown one, and remember the
 # verdict so the 10-s poll doesn't re-probe every tick. A ticker that later
@@ -798,6 +821,7 @@ def _spawn_data_refresh(ticker: str, fetch: bool):
             if fetch:
                 from finviz.new_finviz import fetch_and_save
                 fetch_and_save(ticker, timeframe="i1")
+                _clear_finviz_error()
             # Rollup is pandas/CPU-heavy: run it in a SUBPROCESS, not in this
             # thread. A thread shares the GIL with the web worker, and since
             # _maybe_rollup's cooldown resets exactly on fresh-view triggers,
@@ -817,6 +841,7 @@ def _spawn_data_refresh(ticker: str, fetch: bool):
             invalidate_cache(ticker)
         except Exception as e:
             logging.warning(f"Background refresh failed for {ticker}: {e}")
+            _note_finviz_error(e)
         finally:
             _refresh_inflight.discard(ticker)
 
@@ -974,8 +999,10 @@ def update_graph(ticker, base_tf, active_tf, n_intervals, n_clicks, days_to_load
                         from history.rollup import rollup_ticker
                         rollup_ticker(ticker)
                         last_rollup[ticker] = now
+                    _clear_finviz_error()
                 except Exception as e:
                     logging.error(f"Auto-fetch failed: {e}")
+                    _note_finviz_error(e)
             else:
                 # Periodic path: fetch + rollup in the background so a
                 # timeframe switch never blocks on a FinViz HTTP round-trip.
@@ -1092,14 +1119,15 @@ def update_graph(ticker, base_tf, active_tf, n_intervals, n_clicks, days_to_load
                 invalidate_cache(ticker)
                 df_base, frames = run_pipeline_tiered(ticker, active_tf, days=actual_days)
                 fallback_msg = " [FinViz history backfilled]"
-            except FinvizNotConfigured as e:
-                # No FinViz account configured: an expected state, not a failure.
-                # Leave fetch_error unset so the chart falls through to the
-                # normal "no data for this range yet" message instead of a red
-                # error banner — IBKR data (incl. the demo dataset) still draws.
-                logging.info(f"FinViz backfill skipped for {ticker}: {e}")
+                _clear_finviz_error()
             except Exception as e:
+                # A missing token is reported exactly like any other FinViz
+                # failure. It is not a benign state: without the consolidated
+                # 1-minute bars the tick volume is never scaled up to real
+                # traded volume, so the chart stays readable while every volume
+                # figure on it is wrong.
                 logging.error(f"Instant FinViz backfill failed: {e}")
+                _note_finviz_error(e)
                 fetch_error = e
 
         # Daily-tier coverage check: a ticker may have a few rolled-up days
@@ -1158,10 +1186,9 @@ def update_graph(ticker, base_tf, active_tf, n_intervals, n_clicks, days_to_load
                     # 3. Reload pipeline with newly fetched FinViz data as temporary fallback
                     df_base, frames = run_pipeline(ticker, base_timeframe='i1' if fv_tf == 'i1' else 'd', days=actual_days)
                     fallback_msg = " [Rendering FinViz Fallback - IBKR Backfill in Progress...]"
-                except FinvizNotConfigured as e:
-                    logging.info(f"FinViz fallback skipped for {ticker}: {e}")
                 except Exception as e:
                     logging.error(f"Fallback fetch failed: {e}")
+                    _note_finviz_error(e)
                     fetch_error = e
         
         if df_base.empty:
@@ -1545,6 +1572,24 @@ def update_graph(ticker, base_tf, active_tf, n_intervals, n_clicks, days_to_load
         import datetime
         now_str = datetime.datetime.now().strftime("%H:%M:%S")
         msg = f"Last Updated: {now_str} (Trigger: {trigger}){fallback_msg}"
+
+        # A FinViz failure has to be visible HERE, on a chart that drew fine.
+        # The red-banner path below only runs when the frame comes back empty,
+        # so with any stored data at all — the usual case — a broken FinViz feed
+        # used to be invisible outside the log, while the volume it silently
+        # failed to scale went on being drawn as if it were real.
+        if _finviz_error:
+            msg = html.Div([
+                html.Div(msg),
+                html.Div(
+                    "⚠ FinViz unavailable — volume shown is UNSCALED tick "
+                    "volume (a fraction of real traded volume).",
+                    style={"color": "#ef5350", "fontWeight": "bold",
+                           "marginTop": "4px"},
+                ),
+                html.Div(_finviz_error,
+                         style={"color": "#ef5350", "fontSize": "11px"}),
+            ])
 
         _t_end = time.monotonic()
         logging.info(

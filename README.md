@@ -39,7 +39,7 @@ That is the single most common reason a fresh clone shows an empty chart.
 | **required** | **MongoDB running on `localhost:27017`** | Stores every candle tier, raw tick and L2 snapshot. Nothing works without it. |
 | live only | **IBKR account + IB Gateway or TWS**, logged in, API enabled | Source of tick-by-tick trades and quotes. |
 | live only | **Market-data subscription** (e.g. Nasdaq TotalView) | Without it, depth requests fail (`error 309`) and quotes are delayed. |
-| optional | **FinViz Elite account** | Consolidated 1-minute bars, used to scale the thin tick-stream volume to real traded volume. The app runs without it; only FinViz-sourced bars are unavailable. |
+| **required for correct volume** | **FinViz Elite account** | Supplies the consolidated 1-minute bars that scale the tick stream — roughly a tenth of the tape — up to real traded volume. The app still *draws* without it, but every volume and CVD figure is then several times too small, so it is not an optional extra. Missing or broken, it is reported in red on the dashboard. |
 
 **IB Gateway / TWS port — auto-detected.** Gateway and TWS speak the *identical*
 API; only the port differs, and either application can be configured to use any
@@ -117,8 +117,9 @@ If `py` is not available, use `python` instead. Confirm the version first with
 
 ### Credentials (`.env` and `finviz/api_keys.py`)
 
-Only needed for the FinViz feed. **Skip this whole section if you don't have a
-FinViz Elite account** — the dashboard runs fine without it.
+**Do not skip this if you have a FinViz Elite account** — without a working
+token the volume on every chart is wrong (see
+[Requirements](#requirements)), and the dashboard will say so in red.
 
 There are two files, and they are *not* interchangeable:
 
@@ -138,8 +139,13 @@ the login flow fetch one for you:
 python -m finviz.finviz_curl          # logs in with .env, writes the token
 ```
 
-An empty token is a supported state: the app logs `FinViz backfill skipped` and
-carries on with IBKR data.
+**`start_all.py` creating this file does not give you a working FinViz feed.**
+It writes an *empty* token, which only stops the import from failing on a fresh
+clone. You still have to supply the real token by one of the two routes above.
+Until you do, the dashboard runs on IBKR data alone and shows a red
+`FinViz unavailable — volume shown is UNSCALED tick volume` warning, because
+tick volume that has not been scaled to the consolidated tape is far too low
+and would otherwise look perfectly normal.
 
 ---
 

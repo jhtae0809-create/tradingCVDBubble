@@ -67,8 +67,9 @@ def _token() -> str:
         raise FinvizNotConfigured(
             "no FinViz token — set FINVIZ_AUTH_TOKEN in finviz/api_keys.py, or "
             "run 'python -m finviz.finviz_curl' with FINVIZ_USERNAME / "
-            "FINVIZ_PASSWORD in .env. The dashboard works without it; only "
-            "consolidated FinViz bars are unavailable."
+            "FINVIZ_PASSWORD in .env. Without it there are no consolidated "
+            "1-minute bars, so tick volume is NOT scaled to real traded volume "
+            "and every volume figure on the chart is far too low."
         )
     return token
 
