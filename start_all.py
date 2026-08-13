@@ -118,7 +118,34 @@ def bootstrap_api_keys() -> None:
         'FINVIZ_AUTH_TOKEN = ""\n',
         encoding="utf-8",
     )
-    print("  created finviz/api_keys.py (empty token — FinViz bars disabled)")
+    print("  created finviz/api_keys.py (empty token)")
+
+
+def check_finviz_credentials() -> None:
+    """Warn — but do not stop — when there is no way to reach FinViz.
+
+    An empty token is fine on its own: the first fetch logs in with the .env
+    credentials and writes one. With no .env there is nothing to log in with,
+    and the consequence is easy to miss, because the dashboard still draws a
+    chart — one whose volume is the raw tick stream, several times smaller than
+    the real traded volume it normally gets scaled to.
+    """
+    env = REPO / ".env"
+    if env.exists():
+        text = env.read_text(encoding="utf-8", errors="replace")
+        if "FINVIZ_USERNAME" in text and "FINVIZ_PASSWORD" in text:
+            return
+        why = ".env has no FINVIZ_USERNAME / FINVIZ_PASSWORD"
+    else:
+        why = "no .env file (it is gitignored, so a fresh clone has none)"
+
+    print(f"  WARNING: {why}.\n"
+          "           FinViz supplies the consolidated bars that scale tick\n"
+          "           volume to real traded volume. Without it the charts draw,\n"
+          "           but every volume figure is far too low.\n"
+          "           Fix: copy .env.example to .env and fill in your FinViz\n"
+          "           Elite username and password. The token is then fetched\n"
+          "           automatically on the first chart.")
 
 
 def process_alive(pid: int) -> bool:
@@ -219,6 +246,7 @@ def main() -> None:
           f"{sys.version_info.micro})")
     check_mongodb()
     bootstrap_api_keys()
+    check_finviz_credentials()
 
     running = already_running()
     if running:

@@ -1168,10 +1168,18 @@ def update_graph(ticker, base_tf, active_tf, n_intervals, n_clicks, days_to_load
                 try:
                     import subprocess
                     import os
-                    # 1. Spawn IBKR backfill
+                    import sys
+                    # 1. Spawn IBKR backfill.
+                    # sys.executable, not "python": the child must be the SAME
+                    # interpreter this app runs under, which is the venv's. The
+                    # bare name resolves against PATH, where it is often absent
+                    # entirely (a Mac without pyenv has only python3) or points
+                    # at a system interpreter without this project's packages.
+                    # With output going to DEVNULL below, that failure is
+                    # completely silent — the backfill simply never happens.
                     ibkr_days = min(int(max(3, actual_days or 3)), 180) # Cap IBKR 1-sec fetch to 180 days to avoid API blocks
                     subprocess.Popen(
-                        ["python", "-m", "ibkr.backfill", "--ticker", ticker, "--days", str(ibkr_days)],
+                        [sys.executable, "-m", "ibkr.backfill", "--ticker", ticker, "--days", str(ibkr_days)],
                         cwd=os.path.abspath(os.path.join(os.path.dirname(__file__))),
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL
@@ -1804,7 +1812,12 @@ def update_pie_charts_on_pan(relayout_data):
         raise
     except Exception as e:
         import traceback
-        with open('pie_err.log', 'w') as f:
+        # Beside app.py, not in the CWD, and UTF-8 rather than the platform
+        # default: a traceback carrying a non-ASCII character would otherwise
+        # raise UnicodeEncodeError on Windows while writing the error report.
+        err_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                'pie_err.log')
+        with open(err_path, 'w', encoding='utf-8') as f:
             f.write(traceback.format_exc())
             f.write('\nRelayout Data: ' + str(relayout_data))
         raise PreventUpdate

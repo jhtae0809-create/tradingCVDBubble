@@ -133,3 +133,11 @@ def ensure_indexes(client: MongoClient | None = None) -> None:
     db["backfill_meta"].create_index(
         [("ticker", 1), ("timeframe", 1)], unique=True, background=True,
     )
+    # raw_ticks / raw_quotes are queried by {ticker, date} — calculator.py for
+    # the raw_tick timeframe, prune.py, reclassify.py. These indexes existed on
+    # the development machine only because someone built them by hand years ago;
+    # nothing created them, so every other machine ran those queries as
+    # collection scans that grow with the tick history until the chart stops
+    # responding. Not unique: duplicate prints at the same timestamp are real.
+    for raw in ("raw_ticks", "raw_quotes"):
+        db[raw].create_index([("ticker", 1), ("date", 1)], background=True)

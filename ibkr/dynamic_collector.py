@@ -118,6 +118,15 @@ class UnifiedCollector:
         self.backfill_queue: asyncio.Queue[str] = asyncio.Queue()
         self.backfilled: set[str] = set()
 
+        # This process is what first populates a fresh database, so it is also
+        # where the candle / tick indexes have to come from. Idempotent, and
+        # built in the background, so it costs nothing on an existing install.
+        try:
+            from history.schema import ensure_indexes
+            ensure_indexes()
+        except Exception as e:
+            logging.warning(f"[col] could not ensure MongoDB indexes: {e}")
+
         # Depth snapshot buffering + watchdog state.
         self.col = get_l2_collection() if collect_l2 else None
         if self.col is not None:

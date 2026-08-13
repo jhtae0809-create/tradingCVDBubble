@@ -94,8 +94,11 @@ def calculate_and_show(ticker: str, save_html: bool = True, open_browser: bool =
 
     if open_browser:
         import webbrowser
-        import os
-        webbrowser.open(f"file://{os.path.abspath(path)}")
+        from pathlib import Path
+        # as_uri(), not an f-string: on Windows the absolute path is
+        # C:\\Users\\..., and "file://" + that keeps the backslashes and is one
+        # slash short, so the browser gets a malformed URL and opens nothing.
+        webbrowser.open(Path(path).resolve().as_uri())
 
 
 # ─────────────────────────────────────────
