@@ -19,6 +19,11 @@ on:
   pull_request:
   workflow_dispatch:      # lets you re-run it by hand from the Actions tab
 
+env:
+  # The archive unpacks to mongodb-win32-x86_64-windows-<this>/, which the
+  # extraction step relies on — change both together.
+  MONGO_VERSION: "8.0.4"
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -37,17 +42,46 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install MongoDB
-        run: choco install mongodb --no-progress -y
+      # Downloaded straight from MongoDB rather than installed with Chocolatey.
+      # The community.chocolatey.org feed timed out after 100s and failed the
+      # job, which said nothing about this project — a package index has no
+      # business being on the critical path of a portability test. The official
+      # archive is a fixed URL, cached here between runs, and curl.exe and
+      # tar.exe both ship with Windows, so nothing else has to be installed.
+      - name: Cache MongoDB archive
+        id: mongo-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}\mongodb.zip
+          key: mongodb-${{ env.MONGO_VERSION }}-windows
+
+      - name: Download MongoDB
+        if: steps.mongo-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          curl.exe -L --fail --retry 3 --retry-all-errors --retry-delay 5 `
+            -o "$env:RUNNER_TEMP\mongodb.zip" `
+            "https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-$env:MONGO_VERSION.zip"
 
       - name: Start MongoDB
         shell: pwsh
         run: |
-          $bin = Get-ChildItem "C:\Program Files\MongoDB\Server\*\bin\mongod.exe" |
-                 Select-Object -First 1
-          New-Item -ItemType Directory -Force -Path C:\data\db | Out-Null
-          Start-Process -FilePath $bin.FullName `
-                        -ArgumentList "--dbpath","C:\data\db","--bind_ip","127.0.0.1"
+          # Extract only the server binary; the full archive is ~700 MB unpacked.
+          $exe = "$env:RUNNER_TEMP\mongod.exe"
+          tar -xf "$env:RUNNER_TEMP\mongodb.zip" -C "$env:RUNNER_TEMP" `
+              --strip-components=2 "mongodb-win32-x86_64-windows-$env:MONGO_VERSION/bin/mongod.exe"
+          if (-not (Test-Path $exe)) {
+            # bsdtar refused the member path — unpack the lot and go find it.
+            Write-Host "targeted extract failed; expanding the whole archive"
+            Expand-Archive "$env:RUNNER_TEMP\mongodb.zip" -DestinationPath "$env:RUNNER_TEMP\mongo" -Force
+            $found = Get-ChildItem "$env:RUNNER_TEMP\mongo" -Recurse -Filter mongod.exe |
+                     Select-Object -First 1
+            if (-not $found) { Write-Error "mongod.exe not found in the archive"; exit 1 }
+            $exe = $found.FullName
+          }
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\dbdata" | Out-Null
+          Start-Process -FilePath $exe `
+                        -ArgumentList "--dbpath","$env:RUNNER_TEMP\dbdata","--bind_ip","127.0.0.1"
           # Wait for it rather than sleeping a fixed amount.
           for ($i = 0; $i -lt 30; $i++) {
             if ((Test-NetConnection -ComputerName 127.0.0.1 -Port 27017 `
