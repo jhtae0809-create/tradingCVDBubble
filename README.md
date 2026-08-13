@@ -139,10 +139,15 @@ the login flow fetch one for you:
 python -m finviz.finviz_curl          # logs in with .env, writes the token
 ```
 
-**`start_all.py` creating this file does not give you a working FinViz feed.**
-It writes an *empty* token, which only stops the import from failing on a fresh
-clone. You still have to supply the real token by one of the two routes above.
-Until you do, the dashboard runs on IBKR data alone and shows a red
+**With `.env` filled in you do not have to touch the token at all.** The file
+`start_all.py` creates holds an empty one, but the first FinViz fetch sees that,
+logs in with your `.env` credentials, writes the token and retries — the same
+path that already handled an expired token. Running `finviz_curl` by hand is
+only for checking that the login itself works.
+
+What is *not* automatic is `.env`: without `FINVIZ_USERNAME` and
+`FINVIZ_PASSWORD` there is nothing to log in with. In that case the dashboard
+runs on IBKR data alone and shows a red
 `FinViz unavailable — volume shown is UNSCALED tick volume` warning, because
 tick volume that has not been scaled to the consolidated tape is far too low
 and would otherwise look perfectly normal.
