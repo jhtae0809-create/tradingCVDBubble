@@ -184,15 +184,21 @@ def fetch_and_save(ticker: str, timeframe: str = 'i1') -> list[dict]:
     """
     try:
         candles = get_candle_data(ticker, timeframe)
-    except FinvizTokenError:
-        print("[FinViz] Token expired. Attempting auto-renewal via finviz_curl...")
+    except (FinvizTokenError, FinvizNotConfigured) as e:
+        # FinvizNotConfigured belongs here too. Renewal used to run only for a
+        # REJECTED token, which meant the one case that most needs it — no token
+        # at all, as on any fresh clone, since api_keys.py is gitignored — was
+        # the one case it skipped, and the user was told to paste a token by
+        # hand even though the credentials to fetch one were sitting in .env.
+        print(f"[FinViz] {e.__class__.__name__}: fetching a token via finviz_curl...")
         from finviz import finviz_curl
         session = finviz_curl.login()
         new_token = finviz_curl.get_token(session)
         finviz_curl.update_api_keys(new_token)
-        print("[FinViz] Token successfully auto-renewed. Retrying fetch...")
+        print("[FinViz] Token obtained. Retrying fetch...")
         candles = get_candle_data(ticker, timeframe)
-        
+
+
     save_candles_to_mongo(ticker, timeframe, candles)
     return candles
 
