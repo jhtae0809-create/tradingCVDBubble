@@ -30,6 +30,8 @@ accordingly, so mixed DataFrames (ibkr_tick + finviz_wick) work
 transparently.
 """
 
+import os
+
 import numpy as np
 import pandas as pd
 from pymongo import MongoClient
@@ -795,7 +797,7 @@ def load_from_mongo(
           quote_age_ms; ticks without them keep their stored delta. None (default)
           uses the delta as computed live by tick_collector.
     """
-    client = MongoClient("mongodb://localhost:27017/")
+    client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/"))
     if timeframe == "raw_tick":
         collection = client["finviz_db"]["raw_ticks"]
         query = {"ticker": ticker}

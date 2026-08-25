@@ -4,10 +4,16 @@ Analyzes Level 2 market depth data from MongoDB to calculate
 DOM pressure and generate Eric's 1.5x Spoofing signals.
 """
 
+import os
+
 import pandas as pd
 from pymongo import MongoClient
 
-MONGO_URI = "mongodb://localhost:27017/"
+# Overridable so the app can run against a MongoDB that is not on this
+# machine. Railway (and any container deploy) runs the database as a
+# separate service, where "localhost" is the app container itself and
+# resolves to nothing. Default unchanged, so local runs are unaffected.
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
 DB_NAME = "trading_cvd"
 COLLECTION_NAME = "level2_snapshots"
 

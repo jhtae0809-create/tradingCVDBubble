@@ -1,0 +1,44 @@
+# NOTE: .dockerignore has NO trailing comments — only a line that STARTS with
+# '#' is a comment. "finviz/api_keys.py  # the token" is read as a single
+# literal pattern that matches nothing, which silently ships the file.
+
+# ── SECRETS — never let these into an image ──────────────────────────────────
+# The image is pushed to a registry and deployed; anything copied in is readable
+# by anyone who can pull it or exec into the container. Both of these are
+# gitignored, which makes them easy to forget here: .gitignore and .dockerignore
+# are separate lists and Docker never consults git.
+.env
+.env.*
+!.env.example
+
+# holds the live FinViz Elite token
+finviz/api_keys.py
+# the saved login page from a failed token fetch
+debug_page.html
+
+# ── Bulk: not needed to serve the dashboard ──────────────────────────────────
+.git
+.gitignore
+venv_main/
+venv*/
+__pycache__/
+**/__pycache__/
+*.pyc
+.DS_Store
+.claude/
+.claudeignore
+
+# ── Runtime state from the developer's machine ───────────────────────────────
+*.log
+*.log.*
+.run_pids.json
+pie_err.log
+chart.html
+
+# ── Docs, research and dead paths ────────────────────────────────────────────
+Claude/
+TradingView/
+Eric_Code/
+tests/
+ci/
+.github/

@@ -20,9 +20,15 @@ Quality ladder (higher rank must never be overwritten by lower):
 
 from datetime import time
 
+import os
+
 from pymongo import MongoClient
 
-MONGO_URI = "mongodb://localhost:27017/"
+# Overridable so the app can run against a MongoDB that is not on this
+# machine. Railway (and any container deploy) runs the database as a
+# separate service, where "localhost" is the app container itself and
+# resolves to nothing. Default unchanged, so local runs are unaffected.
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
 DB_NAME = "finviz_db"
 
 # ── Materialized tiers ────────────────────────────────────────────────────────

@@ -50,7 +50,11 @@ from cvd.aggressor import classify_aggressor, next_tick_dir
 
 ET = ZoneInfo("America/New_York")
 
-MONGO_URI = "mongodb://localhost:27017/"
+# Overridable so the app can run against a MongoDB that is not on this
+# machine. Railway (and any container deploy) runs the database as a
+# separate service, where "localhost" is the app container itself and
+# resolves to nothing. Default unchanged, so local runs are unaffected.
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
 DB_NAME = "finviz_db"
 
 # Flush the NBBO buffer once it reaches this many quotes even if no trade has

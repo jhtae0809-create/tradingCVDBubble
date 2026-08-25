@@ -26,6 +26,9 @@ _fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
 logging.getLogger().addHandler(_fh)
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.CYBORG])
+# The underlying Flask/WSGI app, so a production server can serve this
+# without going through app.run():  gunicorn app:server
+server = app.server
 
 app.index_string = '''
 <!DOCTYPE html>
@@ -1828,8 +1831,24 @@ if __name__ == '__main__':
     # reached from another host:  PORT=8060 HOST=0.0.0.0 python -m app
     # DASH_DEBUG=0 turns off the auto-reloader (which otherwise starts a second
     # process — keep it on for development, off when running it as a service).
+    host = os.environ.get("HOST", "127.0.0.1")
+
+    # Debug stays ON for local development (the reloader), but must NEVER be on
+    # when the app is bound to a public interface. Dash's debug mode serves the
+    # Werkzeug debugger, whose in-browser console executes arbitrary Python as
+    # the server user — on a public URL that is remote code execution for
+    # anyone who loads the page. Binding to anything other than loopback is the
+    # signal that this is a deployment, so the default flips there; DASH_DEBUG
+    # still wins if it is set explicitly.
+    loopback = host in ("127.0.0.1", "localhost", "::1")
+    debug = os.environ.get("DASH_DEBUG", "1" if loopback else "0") != "0"
+    if debug and not loopback:
+        print("WARNING: DASH_DEBUG is on while bound to "
+              f"{host} — the Werkzeug debugger console is reachable by anyone "
+              "who can load this page. Set DASH_DEBUG=0 for a deployment.")
+
     app.run(
-        debug=os.environ.get("DASH_DEBUG", "1") != "0",
-        host=os.environ.get("HOST", "127.0.0.1"),
+        debug=debug,
+        host=host,
         port=int(os.environ.get("PORT", "8050")),
     )

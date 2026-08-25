@@ -1,0 +1,13 @@
+# Container/Railway image: the dashboard only.
+#
+# Deliberately the SHORT list. The deployed app serves data that is already in
+# MongoDB — it never collects, so it needs neither ib_async nor the FinViz
+# scraping stack, and leaving them out keeps the image small and the build fast.
+# (app.py imports both lazily, inside the callbacks that use them, so nothing
+# breaks at import time.)
+-r requirements-demo.txt
+
+# Production WSGI server. app.run() is Werkzeug's development server, which
+# prints "do not use in a production deployment" for good reason: single
+# threaded, no request limits, no worker recycling.
+gunicorn>=22.0

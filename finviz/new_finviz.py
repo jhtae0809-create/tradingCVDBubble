@@ -2,6 +2,7 @@ import requests
 import csv
 import io
 import importlib
+import os
 from pathlib import Path
 
 # finviz/api_keys.py holds the FinViz Elite auth token. It is deliberately NOT
@@ -29,7 +30,7 @@ from . import api_keys
 from pymongo import MongoClient, UpdateOne
 
 # MongoDB connection
-client = MongoClient("mongodb://localhost:27017/")
+client = MongoClient(os.environ.get("MONGO_URI", "mongodb://localhost:27017/"))
 db = client["finviz_db"]
 collection = db["candles"]
 

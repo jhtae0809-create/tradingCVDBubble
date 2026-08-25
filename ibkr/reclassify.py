@@ -23,6 +23,7 @@ Usage:
     python -m ibkr.reclassify --ticker NVDA --write         # rewrite raw_ticks.delta + rebuild 1sec bars
 """
 import argparse
+import os
 
 import numpy as np
 import pandas as pd
@@ -30,7 +31,11 @@ from pymongo import MongoClient
 
 from cvd.aggressor import classify_vectorized
 
-MONGO_URI = "mongodb://localhost:27017/"
+# Overridable so the app can run against a MongoDB that is not on this
+# machine. Railway (and any container deploy) runs the database as a
+# separate service, where "localhost" is the app container itself and
+# resolves to nothing. Default unchanged, so local runs are unaffected.
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
 DB_NAME = "finviz_db"
 
 

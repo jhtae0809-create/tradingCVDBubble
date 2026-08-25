@@ -36,6 +36,10 @@ APP_CMD = ["-m", "app"]
 COLLECTOR_LOG = REPO / "logs_collector.log"
 APP_LOG = REPO / "logs_app.log"
 
+# Overridable so this can point at a MongoDB that is not on this machine (a
+# container deploy runs the database as its own service). Default unchanged.
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
+
 
 def _venv_hint() -> tuple[str, str]:
     """(pip path, python path) for this platform, for error messages."""
@@ -78,7 +82,7 @@ def check_mongodb() -> None:
     front so the reason is obvious instead of buried in a log."""
     from pymongo import MongoClient
     try:
-        MongoClient("mongodb://localhost:27017/",
+        MongoClient(MONGO_URI,
                     serverSelectionTimeoutMS=3000).admin.command("ping")
     except Exception as e:
         install = (
@@ -92,13 +96,13 @@ def check_mongodb() -> None:
             "    Ubuntu: sudo apt install -y mongodb && sudo systemctl start mongodb\n"
         )
         sys.exit(
-            f"ERROR: cannot reach MongoDB at localhost:27017 ({e.__class__.__name__}).\n"
+            f"ERROR: cannot reach MongoDB at {MONGO_URI} ({e.__class__.__name__}).\n"
             "  This project stores all candles, ticks and L2 snapshots there.\n"
             "  Install and start it, then re-run:\n"
             f"{install}"
             "    Docker: docker run -d -p 27017:27017 --name mongo mongo:7"
         )
-    print("  MongoDB: reachable at localhost:27017")
+    print(f"  MongoDB: reachable at {MONGO_URI}")
 
 
 def bootstrap_api_keys() -> None:
