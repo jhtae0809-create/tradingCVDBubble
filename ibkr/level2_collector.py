@@ -41,6 +41,7 @@ few seconds; the least-recently-viewed one is dropped when the cap is hit.
 import argparse
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -53,6 +54,12 @@ from level2_webapp.data_provider import (
 from history.schema import mongo_client, DB_NAME
 
 ET = ZoneInfo("America/New_York")
+
+# The machine running IB Gateway / TWS. Loopback is right for every local run
+# and stays the default; a container deploy is the case that needs it
+# overridden, because there Gateway is a separate service and 127.0.0.1 is this
+# process's own container. Set IB_HOST to the Gateway service name.
+IB_HOST = os.environ.get("IB_HOST", "127.0.0.1")
 
 # Dynamic mode: how often to reconcile the subscribed set with collector_requests.
 DYNAMIC_POLL_SEC = 5.0
@@ -155,7 +162,7 @@ class Level2Collector:
                 await self._subscribe_one(sym)
 
     async def _connect_and_subscribe(self):
-        await self.ib.connectAsync("127.0.0.1", self.port, clientId=self.client_id)
+        await self.ib.connectAsync(IB_HOST, self.port, clientId=self.client_id)
         log.info(f"Connected (clientId={self.client_id})")
         self.books = {}
         self.contracts = {}

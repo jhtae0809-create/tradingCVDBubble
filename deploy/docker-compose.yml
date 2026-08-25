@@ -1,0 +1,90 @@
+# The FULL stack — MongoDB, IB Gateway, the collector and the dashboard.
+#
+# This is for running and debugging the whole thing locally in containers,
+# which is the only honest way to find out whether the cloud topology works
+# before paying for it. Railway does not read this file: there each of these
+# is its own service. The env var wiring below is what has to be reproduced
+# in Railway's Variables UI.
+#
+#   cd deploy && docker compose up
+#
+# Credentials come from deploy/.env (gitignored — see .env.example). Never put
+# them in this file.
+
+services:
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  gateway:
+    # Headless IB Gateway: Java + Xvfb + IBC, which handles the login and the
+    # daily restart. Gateway has no headless mode of its own.
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    environment:
+      # TRADING_MODE picks which account AND which API port Gateway listens on:
+      #   paper -> 4002      live -> 4001
+      # Paper is strongly preferred for an unattended deployment: a live login
+      # requires 2FA approval on a phone, and Gateway restarts daily, so a live
+      # deployment stops collecting every day until someone taps the prompt.
+      # Paper receives the identical real-time feed once "Share real-time market
+      # data with paper account" is enabled in Client Portal.
+      TRADING_MODE: ${TRADING_MODE:-paper}
+      TWS_USERID: ${TWS_USERID:?set TWS_USERID in deploy/.env}
+      TWS_PASSWORD: ${TWS_PASSWORD:?set TWS_PASSWORD in deploy/.env}
+      # Let the collector's container reach the API socket. Gateway otherwise
+      # binds loopback only, which in a container means nothing else can dial it.
+      TRUSTED_IPS: ${TRUSTED_IPS:-0.0.0.0/0}
+      READ_ONLY_API: ${READ_ONLY_API:-yes}
+      TZ: America/New_York
+    ports:
+      # Exposed for debugging from the host only. Not needed by the collector,
+      # which reaches Gateway over the compose network by service name.
+      - "127.0.0.1:4002:4002"
+      - "127.0.0.1:4001:4001"
+
+  collector:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.collector
+    depends_on:
+      mongo:
+        condition: service_healthy
+      gateway:
+        condition: service_started
+    environment:
+      MONGO_URI: mongodb://mongo:27017/
+      # THE reason ibkr/*.py stopped hardcoding 127.0.0.1: here Gateway is a
+      # different container, and loopback would be the collector itself.
+      IB_HOST: gateway
+    command: >
+      python -m ibkr.dynamic_collector
+      --port ${IB_API_PORT:-4002}
+    restart: unless-stopped
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGO_URI: mongodb://mongo:27017/
+      PORT: "8050"
+      # The collector is filling this database with live data, so do not
+      # overwrite it with the fixed demo day.
+      DEMO_SEED: "0"
+      FINVIZ_USERNAME: ${FINVIZ_USERNAME:-}
+      FINVIZ_PASSWORD: ${FINVIZ_PASSWORD:-}
+    ports:
+      - "8050:8050"
+    restart: unless-stopped
+
+volumes:
+  mongo_data:

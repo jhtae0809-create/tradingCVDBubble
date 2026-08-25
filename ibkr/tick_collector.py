@@ -57,6 +57,12 @@ ET = ZoneInfo("America/New_York")
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
 DB_NAME = "finviz_db"
 
+# The machine running IB Gateway / TWS. Loopback is right for every local run
+# and stays the default; a container deploy is the case that needs it
+# overridden, because there Gateway is a separate service and 127.0.0.1 is this
+# process's own container. Set IB_HOST to the Gateway service name.
+IB_HOST = os.environ.get("IB_HOST", "127.0.0.1")
+
 # Flush the NBBO buffer once it reaches this many quotes even if no trade has
 # rolled the 1-sec bar over. Quotes update far more often than trades, so during
 # quote-only periods (halts, thin symbols, pre-market) the bar flush may not fire
@@ -370,7 +376,7 @@ class TickCollector:
             f"[{self.ticker}] Connecting to IB Gateway "
             f"(port={self.port}, clientId={self.client_id})..."
         )
-        await self.ib.connectAsync("127.0.0.1", self.port, clientId=self.client_id)
+        await self.ib.connectAsync(IB_HOST, self.port, clientId=self.client_id)
         logging.info(f"[{self.ticker}] Connected.")
 
         contract = Stock(self.ticker, "SMART", "USD")

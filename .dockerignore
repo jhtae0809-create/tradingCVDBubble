@@ -7,9 +7,14 @@
 # by anyone who can pull it or exec into the container. Both of these are
 # gitignored, which makes them easy to forget here: .gitignore and .dockerignore
 # are separate lists and Docker never consults git.
+# Patterns without a slash match the root only, so the ** forms are what
+# actually catch deploy/.env — the compose stack's credentials file.
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
+!**/.env.example
 
 # holds the live FinViz Elite token
 finviz/api_keys.py

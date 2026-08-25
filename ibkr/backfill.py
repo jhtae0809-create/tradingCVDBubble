@@ -29,6 +29,7 @@ Usage:
 import asyncio
 import argparse
 import logging
+import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -40,6 +41,12 @@ from history.schema import mongo_client
 from history.store import get_backfill_coverage, set_backfill_coverage, upsert_bars
 
 ET = ZoneInfo("America/New_York")
+
+# The machine running IB Gateway / TWS. Loopback is right for every local run
+# and stays the default; a container deploy is the case that needs it
+# overridden, because there Gateway is a separate service and 127.0.0.1 is this
+# process's own container. Set IB_HOST to the Gateway service name.
+IB_HOST = os.environ.get("IB_HOST", "127.0.0.1")
 
 PACING_DELAY = 11.0     # wait between requests: 11 s → ≈54 req/10 min (< 60 limit)
 PACING_BACKOFF = 60.0   # wait after a pacing-violation error
@@ -129,7 +136,7 @@ async def backfill_ticker(
 
     ib = IB()
     try:
-        await ib.connectAsync("127.0.0.1", port, clientId=client_id)
+        await ib.connectAsync(IB_HOST, port, clientId=client_id)
     except Exception as e:
         logging.error(f"[Backfill] Connection failed: {e}")
         return

@@ -39,6 +39,7 @@ Usage:
 import argparse
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -81,6 +82,12 @@ IB_PORTS = [
     (4001, "IB Gateway live default"),
 ]
 CONNECT_PROBE_TIMEOUT = 5.0     # per-port probe; a closed port refuses instantly
+
+# The machine running IB Gateway / TWS. Loopback is right for every local
+# run and stays the default; a container deploy is the case that needs it
+# overridden, because there Gateway is a separate service and 127.0.0.1 is
+# the collector's own container. Set IB_HOST to the Gateway service name.
+IB_HOST = os.environ.get("IB_HOST", "127.0.0.1")
 
 
 class UnifiedCollector:
@@ -381,9 +388,9 @@ class UnifiedCollector:
         errors = []
         for port, label in candidates:
             try:
-                logging.info(f"[col] connecting to IB on port {port} ({label}), "
-                             f"clientId={self.client_id}...")
-                await self.ib.connectAsync("127.0.0.1", port,
+                logging.info(f"[col] connecting to IB at {IB_HOST}:{port} "
+                             f"({label}), clientId={self.client_id}...")
+                await self.ib.connectAsync(IB_HOST, port,
                                            clientId=self.client_id,
                                            timeout=CONNECT_PROBE_TIMEOUT)
             except Exception as e:
@@ -410,7 +417,7 @@ class UnifiedCollector:
             "    3. The API port there matches one of "
             f"{', '.join(str(p) for p, _ in IB_PORTS)} "
             "(Gateway paper is 4002, TWS paper 7497).\n"
-            "    4. 127.0.0.1 is in the Trusted IPs list.\n"
+            f"    4. this host ({IB_HOST}) is in the Trusted IPs list.\n"
             "  Force a specific port with:  python -m ibkr.dynamic_collector --port <n>"
         )
         raise ConnectionError("no IB API port answered")
