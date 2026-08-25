@@ -25,6 +25,32 @@ from .calculator import run_pipeline, TIMEFRAME_RULE, DAILY_OR_ABOVE, WEEK_OR_AB
 # edge or zooms out, and passes it via build_chart(max_candles=...).
 MAX_CANDLES = 1000
 
+
+# ── Timestamp → row lookup ──────────────────────────────────────────────────
+def nearest_positions(index, targets):
+    """Row positions of the bars closest in time to `targets`.
+
+    pandas' ``Index.get_indexer(method="nearest")`` REFUSES a non-unique index,
+    raising InvalidIndexError. Every resampled frame has a unique index, but the
+    raw_tick frame does not: several prints routinely land on the same
+    timestamp, so any lookup against it blew up the whole chart. Doing the
+    search by hand needs only a sorted index, which all frames are. When
+    several rows share the winning timestamp it returns one of them (the first
+    on an exact hit); they are the same instant, so which one is immaterial.
+
+    Returns an int array of positions, empty when there is nothing to search.
+    """
+    vals = np.asarray(index)
+    t = np.asarray(targets)
+    if vals.size == 0 or t.size == 0:
+        return np.empty(0, dtype=int)
+    right = np.clip(np.searchsorted(vals, t), 0, vals.size - 1)
+    left = np.clip(right - 1, 0, vals.size - 1)
+    # Ties go left, matching get_indexer's behaviour.
+    take_left = np.abs(vals[left] - t) <= np.abs(vals[right] - t)
+    return np.where(take_left, left, right)
+
+
 # ── Fixed-domain pie strip sizing ──────────────────────────────────────────
 # The pie strip aims for ~PIE_TARGET pies at any zoom, with EVERY pie covering
 # the same number of bars so a pie's size reflects real volume, not how many
@@ -791,8 +817,9 @@ def build_chart(df: pd.DataFrame, frames: dict, ticker: str, active_timeframe: s
             # when x_times is absent or can't be matched.
             _xt = l2_data.get("x_times")
             if _xt is not None and len(_xt) >= _n:
-                _pos = df.index.get_indexer(pd.DatetimeIndex(list(_xt)[-_n:]), method="nearest")
-                _xcoords = df['x_idx'].to_numpy()[_pos]
+                _rows = nearest_positions(
+                    df.index, pd.DatetimeIndex(list(_xt)[-_n:]))
+                _xcoords = df['x_idx'].to_numpy()[_rows]
             else:
                 _xcoords = df['x_idx'].iloc[-_n:].to_numpy()
             fig.add_trace(go.Heatmap(

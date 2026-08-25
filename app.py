@@ -2,7 +2,7 @@ import dash
 from dash import dcc, html, Input, Output, State, ctx
 import dash_bootstrap_components as dbc
 from cvd.calculator import run_pipeline, TIMEFRAME_RULE_IBKR, TIMEFRAME_RULE
-from cvd.visualizer import build_chart, MAX_CANDLES, pie_layout
+from cvd.visualizer import build_chart, MAX_CANDLES, pie_layout, nearest_positions
 from history.schema import SERVE_TIER, SERVE_WINDOW_DAYS
 from history.serve import run_pipeline_tiered, invalidate_cache
 from level2_webapp.data_provider import fetch_and_aggregate_l2_data, compute_support_resistance
@@ -1367,8 +1367,8 @@ def update_graph(ticker, base_tf, active_tf, n_intervals, n_clicks, days_to_load
                 # the frame's end (far off-screen) and the heatmap never shows.
                 if anchor_dt is not None and len(_l2_full):
                     try:
-                        _apos = _l2_full.index.get_indexer(
-                            [pd.Timestamp(anchor_dt)], method='nearest')[0]
+                        _apos = int(nearest_positions(
+                            _l2_full.index, [pd.Timestamp(anchor_dt)])[0])
                     except Exception:
                         _apos = len(_l2_full) - 1
                     _lo = max(0, _apos - 150)
@@ -1435,8 +1435,8 @@ def update_graph(ticker, base_tf, active_tf, n_intervals, n_clicks, days_to_load
             # window centered on it, so the exact typed date/time lands mid-
             # screen instead of the front (or tail) of the ±N loaded window.
             try:
-                pos = df_active.index.get_indexer([pd.Timestamp(anchor_dt)],
-                                                  method='nearest')[0]
+                pos = int(nearest_positions(df_active.index,
+                                            [pd.Timestamp(anchor_dt)])[0])
                 if pos >= 0:
                     cx = float(df_active['x_idx'].iloc[pos])
                     half = ANCHOR_VIEW_BARS / 2.0

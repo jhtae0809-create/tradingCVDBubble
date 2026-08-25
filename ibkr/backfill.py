@@ -50,6 +50,8 @@ IB_HOST = os.environ.get("IB_HOST", "127.0.0.1")
 
 PACING_DELAY = 11.0     # wait between requests: 11 s → ≈54 req/10 min (< 60 limit)
 PACING_BACKOFF = 60.0   # wait after a pacing-violation error
+MAX_CHUNK_RETRIES = 5   # give up on a chunk rather than loop on it forever
+MAX_PACING_RETRIES = 10 # error 162 also means "session taken" — never clears
 
 # barsize key → IBKR barSizeSetting, chunk span per request, IBKR durationStr
 BAR_CONFIG = {
@@ -147,6 +149,7 @@ async def backfill_ticker(
     total_saved = 0
     current_end = end
     request_count = 0
+    consecutive_errors = 0
 
     try:
         while current_end > start:
@@ -184,13 +187,46 @@ async def backfill_ticker(
                     keepUpToDate=False,
                 )
                 request_count += 1
+                consecutive_errors = 0
             except Exception as e:
                 err = str(e)
                 if "162" in err or "pacing" in err.lower():
-                    logging.warning(f"  Pacing violation — waiting {PACING_BACKOFF}s...")
+                    # Error 162 is not only pacing. IBKR also returns it for
+                    # "Trading TWS session is connected from a different IP
+                    # address", which no amount of waiting fixes — so this
+                    # branch is capped as well, just more generously, because a
+                    # genuine pacing violation really does clear on its own.
+                    consecutive_errors += 1
+                    if consecutive_errors >= MAX_PACING_RETRIES:
+                        logging.error(
+                            f"  Error 162 persisted for {MAX_PACING_RETRIES} "
+                            f"attempts — this is not pacing (check that no other "
+                            f"IBKR session holds the market-data line). Aborting.")
+                        return
+                    logging.warning(f"  Pacing violation — waiting {PACING_BACKOFF}s "
+                                    f"(attempt {consecutive_errors}/{MAX_PACING_RETRIES})...")
                     await asyncio.sleep(PACING_BACKOFF)
                     continue
-                logging.error(f"  Request error: {e}")
+                # Retry the SAME chunk, but only a few times. `continue` here
+                # does not advance current_end, so an error that will never
+                # clear on its own — "Not connected" after the socket dies is
+                # the one seen in practice — used to spin on one chunk every
+                # 10s forever. That also wedges the caller: the dynamic
+                # collector's catch-up worker is a single sequential consumer,
+                # so a stuck backfill silently starves every ticker queued
+                # behind it. Give up instead and let the caller re-queue.
+                consecutive_errors += 1
+                logging.error(f"  Request error: {e} "
+                              f"(attempt {consecutive_errors}/{MAX_CHUNK_RETRIES})")
+                if not ib.isConnected():
+                    logging.error("  Connection to IB is gone — aborting this "
+                                  "backfill; it will be retried on the next run.")
+                    return
+                if consecutive_errors >= MAX_CHUNK_RETRIES:
+                    logging.error(f"  Giving up on {ticker} ({barsize}) after "
+                                  f"{MAX_CHUNK_RETRIES} failed attempts on the "
+                                  f"same chunk.")
+                    return
                 await asyncio.sleep(10)
                 continue
 
