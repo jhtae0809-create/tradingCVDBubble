@@ -76,10 +76,10 @@ DEPTH_STALE_RECONNECT_SEC = 120.0
 # either application can be pointed at any port, so a Gateway configured on 7497
 # is perfectly normal. Probing is what settles it.
 IB_PORTS = [
-    (7497, "TWS paper default"),
-    (4002, "IB Gateway paper default"),
-    (7496, "TWS live default"),
-    (4001, "IB Gateway live default"),
+    (7497, "TWS paper"),
+    (4002, "IB Gateway paper"),
+    (7496, "TWS live"),
+    (4001, "IB Gateway live"),
 ]
 CONNECT_PROBE_TIMEOUT = 5.0     # per-port probe; a closed port refuses instantly
 
@@ -389,7 +389,8 @@ class UnifiedCollector:
         for port, label in candidates:
             try:
                 logging.info(f"[col] connecting to IB at {IB_HOST}:{port} "
-                             f"({label}), clientId={self.client_id}...")
+                             f"(default port for {label}), "
+                             f"clientId={self.client_id}...")
                 await self.ib.connectAsync(IB_HOST, port,
                                            clientId=self.client_id,
                                            timeout=CONNECT_PROBE_TIMEOUT)
@@ -398,8 +399,12 @@ class UnifiedCollector:
                 continue
 
             if self._last_good_port != port:
-                logging.info(f"[col] connected on port {port} ({label}) — tick "
-                             f"and backfill connections will use it too")
+                # Deliberately no app label here. The port does NOT identify the
+                # application — Gateway is perfectly happy on 7497 — and naming
+                # one reads as a statement of fact about what answered, which
+                # sends Gateway users looking for a TWS they never installed.
+                logging.info(f"[col] connected on port {port} — tick and "
+                             f"backfill connections will use it too")
             self.port = port
             self._last_good_port = port
             return

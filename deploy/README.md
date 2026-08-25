@@ -96,6 +96,14 @@ Not done here, and not a small addition. It needs:
   on a phone, and Gateway restarts daily, so the feed would die every day.
   Paper logs in unattended and receives the identical real-time feed once
   *"Share real-time market data with paper account"* is enabled in Client Portal;
+
+- **only one IBKR session anywhere.** Market data is bound to a single session
+  per account, and a paper account borrows the live account's entitlement, so a
+  phone app or a second Gateway logged in elsewhere takes it: `reqTickByTickData`
+  then fails with *error 10189, "Trading TWS session is connected from a
+  different IP address"* and historical requests with *error 162*. A cloud
+  Gateway is by definition a different IP, so once this is deployed a local
+  Gateway will fight it for the feed;
 - the market-data subscriptions on that account: US Securities Snapshot and
   Futures Value Bundle + US Equity and Options Add-On Streaming Bundle (both
   needed for `reqTickByTickData`) and NASDAQ TotalView-OpenView for depth.

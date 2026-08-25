@@ -35,8 +35,14 @@ services:
       # Paper receives the identical real-time feed once "Share real-time market
       # data with paper account" is enabled in Client Portal.
       TRADING_MODE: ${TRADING_MODE:-paper}
-      TWS_USERID: ${TWS_USERID:?set TWS_USERID in deploy/.env}
-      TWS_PASSWORD: ${TWS_PASSWORD:?set TWS_PASSWORD in deploy/.env}
+      # LEFT side = the names this image demands; RIGHT side = ours.
+      # The image is IB Gateway, but its variables are called TWS_* because it
+      # drives IBC, which supports Gateway and TWS through one set of names.
+      # Reading "TWS_USERID" while running Gateway is confusing enough to make
+      # people think they configured the wrong thing, so deploy/.env uses
+      # IB_USERNAME / IB_PASSWORD and the mapping happens here, once.
+      TWS_USERID: ${IB_USERNAME:?set IB_USERNAME in deploy/.env}
+      TWS_PASSWORD: ${IB_PASSWORD:?set IB_PASSWORD in deploy/.env}
       # Let the collector's container reach the API socket. Gateway otherwise
       # binds loopback only, which in a container means nothing else can dial it.
       TRUSTED_IPS: ${TRUSTED_IPS:-0.0.0.0/0}
