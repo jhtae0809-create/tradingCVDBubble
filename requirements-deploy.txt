@@ -1,11 +1,23 @@
-# Container/Railway image: the dashboard only.
+# Container/Railway image: the dashboard, without the broker library.
 #
-# Deliberately the SHORT list. The deployed app serves data that is already in
-# MongoDB — it never collects, so it needs neither ib_async nor the FinViz
-# scraping stack, and leaving them out keeps the image small and the build fast.
-# (app.py imports both lazily, inside the callbacks that use them, so nothing
-# breaks at import time.)
+# The short list plus FinViz. No ib_async: the deployed app never opens an IB
+# connection — the collector service does that, from its own image.
 -r requirements-demo.txt
+
+# FinViz IS needed here, despite the app not "collecting". Its consolidated
+# 1-minute bars are the reference that scales the tick stream (roughly a tenth
+# of the tape) up to real traded volume, and the app fetches them itself for
+# whichever ticker is being viewed. Leaving these out does not disable a
+# feature: the chart still draws, so nothing LOOKS wrong, while every volume
+# and CVD figure on it is several times too small. app.py imports them lazily,
+# so the failure is a log line at refresh time rather than a crash at startup —
+# which is exactly why it went unnoticed until the container was watched.
+requests>=2.32
+curl_cffi>=0.7          # browser-impersonating client used by the token refresh
+beautifulsoup4>=4.12    # parses the FinViz login page for the auth token
+python-dotenv>=1.0      # finviz_curl imports it at module scope, so it is
+                        # required even when the credentials come from the
+                        # environment rather than a .env file
 
 # Production WSGI server. app.run() is Werkzeug's development server, which
 # prints "do not use in a production deployment" for good reason: single
