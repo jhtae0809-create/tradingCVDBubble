@@ -111,8 +111,18 @@ def main() -> None:
         print(f"  {name:<38} {second[name]:>9,}  {delta:+,} {mark}")
 
     print()
-    if moving:
-        print(f"LIVE: {', '.join(moving)} advanced. The tape is flowing.")
+    # The verdict hangs on the TICK stream, not on "did any number move".
+    # A restart flushes a buffered depth snapshot or two, so +1 on L2 while
+    # ticks sit still is exactly what a DEAD feed looks like a minute after a
+    # restart — and calling that "flowing" is worse than saying nothing.
+    ticks_key = f"{TICK_DB}.raw_ticks"
+    if second[ticks_key] - first[ticks_key] > 0:
+        print(f"LIVE: ticks are arriving ({', '.join(moving)} advanced).")
+    elif moving:
+        print(f"PARTIAL: {', '.join(moving)} moved, but NO NEW TICKS.")
+        print("If you restarted in the last couple of minutes, that is expected —")
+        print("Gateway takes ~90s to log in and the collector reconnects after it.")
+        print("Wait for '[col] SUBSCRIBED ticks' in the collector log, then re-run.")
     elif not rth:
         print("Nothing moved, which is correct outside regular hours. This run")
         print("proves nothing either way — repeat it between 09:30 and 16:00 ET.")
