@@ -16,6 +16,11 @@ services:
     image: mongo:7
     volumes:
       - mongo_data:/data/db
+    ports:
+      # 27018, not 27017: a laptop running the stack natively already has mongod
+      # on 27017, and quietly connecting to the wrong database is a bad hour.
+      # Host-side debugging only — the other services use the compose network.
+      - "127.0.0.1:27018:27017"
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
       interval: 10s
