@@ -160,10 +160,9 @@ and would otherwise look perfectly normal.
 Needed only for [Run it (A)](#run-it-a-live-data). The bundled-dataset path
 needs none of this.
 
-IB Gateway and TWS are the *same* API behind different front-ends. Gateway is
-the smaller of the two — no charts, no trading screens, just the connection —
-so it is what this project is developed against and what the instructions below
-assume. TWS works identically if you already have it open.
+Gateway and TWS speak the identical API; Gateway is just the smaller of the
+two, so it is what these instructions assume. TWS works the same if you already
+have it open.
 
 **1) Download and install.**
 <https://www.interactivebrokers.com/en/trading/ibgateway-latest.php>
@@ -182,16 +181,9 @@ this project never places an order either way.
 | Setting | Set it to | Why |
 |---|---|---|
 | **Enable ActiveX and Socket Clients** | **ticked** | The API is off by default. Nothing connects until this is on — this is the one non-negotiable box. |
-| **Read-Only API** | **leave it ticked** | Read-only blocks *order placement*, not market data. Every connection this repo opens passes `readonly=True` (`READONLY` in each `ibkr/*.py` collector), so it never asks for write access and read-only mode costs it nothing. Leaving it on means the code provably cannot trade on your account. |
+| **Read-Only API** | either way | Every collector connects with `readonly=True`, so it works ticked or unticked. Ticked is worth preferring on someone else's account: the code then provably cannot place an order. |
 | **Socket port** | leave whatever is there | The collector probes 7497 / 4002 / 7496 / 4001 and uses whichever answers — see the port table in [Requirements](#requirements). Only pin it with `--port` if two instances are running at once. |
 | **Trusted IPs** | contains `127.0.0.1` | Usually there by default. If the collector is refused at the socket rather than timing out, check this. |
-
-> **Do not untick Read-Only to "fix" missing data.** It is a common wrong turn,
-> because a *write-requesting* client against a read-only Gateway does look like
-> a data failure: Gateway raises a confirmation dialog, and until someone clicks
-> it the handshake simply times out with no error explaining why. That is a
-> dialog you cannot see, not a permission you lack. This repo avoids it by
-> asking for read-only in the first place.
 
 **4) Leave Gateway running, and turn off the daily auto-logoff.**
 
@@ -594,7 +586,6 @@ That is not a crash; load the bundled dataset
 | `error 309 / not subscribed` | The IBKR account lacks a market-depth subscription (e.g. Nasdaq TotalView). Depth is unavailable; the rest still works. |
 | `error 10189 — requested market data is not subscribed` | Real-time market-data permission is missing or was lost (it can drop when the account session changes). Re-check the subscription in Account Management. |
 | `Trading TWS session is connected from a different IP address` in the Gateway log, and 10189 / 162 for **every** ticker at once | The same account is logged in somewhere else. One market-data subscription permits one session, and paper shares the parent live account's. Log the other session out — see [One session per market-data subscription](#one-session-per-market-data-subscription). |
-| Collector hangs at connect and then times out, with no error from Gateway | A confirmation dialog is waiting on the Gateway machine. This repo connects with `readonly=True` so it should not raise one; if you are running an older copy, either take the current `ibkr/` or click the dialog. **Unticking Read-Only API is not the fix** — read-only never blocked market data. |
 | `10089: requires additional subscription for API` on depth only | Single-exchange depth (`NASDAQ.NMS`) needs the **TotalView-OpenView EDS** add-on on top of TotalView. SMART depth still works; the heatmap draws from the venues you are permitted. |
 | `clientId already in use` / collector keeps disconnecting | Two collectors are running. `python stop_all.py`, then `python start_all.py` (which now refuses to start a duplicate). |
 | Data only appears for the ticker you searched | By design — collection is on demand, most-recent 5 tickers (3 for depth). |
