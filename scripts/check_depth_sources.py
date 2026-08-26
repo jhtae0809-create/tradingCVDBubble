@@ -68,37 +68,53 @@ async def main_async(ticker: str, host: str, port: int) -> None:
         await ib.qualifyContractsAsync(smart)
         smart_book = ib.reqMktDepth(smart, numRows=10, isSmartDepth=True)
 
-        native_book = None
+        # The native NASDAQ book is requested only to see whether IBKR ACCEPTS
+        # it — the answer arrives as an async error (10089) rather than an
+        # exception, so watch the error stream rather than this call. Its
+        # Ticker is deliberately not printed: ib_async keys tickers by conId,
+        # so the same contract hands back the SAME object as the SMART request
+        # and printing it would show the SMART book twice under two headings.
+        native_refusal = []
+        ib.errorEvent += lambda reqId, code, msg, c=None: (
+            native_refusal.append(f"{code}: {msg}") if code in (10089, 309, 2152)
+            and "DEEP" in str(msg) else None)
         native = Stock(ticker, "NASDAQ", "USD")
         try:
             await ib.qualifyContractsAsync(native)
-            # isSmartDepth=False -> the venue's own book. IEX cannot serve this.
-            native_book = ib.reqMktDepth(native, numRows=10, isSmartDepth=False)
+            ib.reqMktDepth(native, numRows=10, isSmartDepth=False)
         except Exception as e:
-            print(f"\nNative NASDAQ depth REFUSED: {e!r}")
+            native_refusal.append(repr(e))
 
         await asyncio.sleep(SETTLE_SEC)
 
         _describe(smart_book, f"{ticker} SMART book (isSmartDepth=True)")
-        if native_book is not None:
-            _describe(native_book, f"{ticker} native NASDAQ book (TotalView)")
+
+        print(f"\n── {ticker} native NASDAQ deep book (TotalView) ──────────────")
+        if native_refusal:
+            for m in dict.fromkeys(native_refusal):
+                print(f"  REFUSED  {m}")
+            print("  -> TotalView is NOT entitled on this login.")
+        else:
+            print("  accepted — TotalView is entitled on this login.")
 
         print("\nHow to read this (regular hours only):")
-        print("  venues include NSDQ/NASDAQ  -> TotalView is feeding. Nothing to fix.")
-        print("  venues are IEX only, native NASDAQ book has rows")
-        print("                              -> entitlement is fine; SMART just")
-        print("                                 isn't aggregating it.")
-        print("  venues are IEX only, native NASDAQ book EMPTY or refused")
-        print("                              -> TotalView is not reaching THIS")
-        print("                                 login. On a paper account, check")
-        print("                                 'Share real-time market data with")
-        print("                                 paper trading account'.")
-        print("  venues are OVERNIGHT/IBEOS  -> you ran this outside regular")
+        print("  NSDQ among the venues       -> TotalView is feeding.")
+        print("  native book refused         -> TotalView is not on THIS login.")
+        print("                                 On a paper account, check 'Share")
+        print("                                 real-time market data with paper")
+        print("                                 trading account' in Client Portal.")
+        print("  only OVERNIGHT/IBEOS        -> you ran this outside regular")
         print("                                 hours. Re-run 09:30-16:00 ET.")
+        print("\nNote: the SMART book can be full (10x10) while TotalView is off —")
+        print("the other venues supply the rows. A full book is NOT evidence of it.")
 
-        ib.cancelMktDepth(smart, isSmartDepth=True)
-        if native_book is not None:
-            ib.cancelMktDepth(native, isSmartDepth=False)
+        # Cancel what we opened. Depth lines are a limited resource (3 for a
+        # retail account) and a leaked one starves the running collector.
+        for c, sm in ((smart, True), (native, False)):
+            try:
+                ib.cancelMktDepth(c, isSmartDepth=sm)
+            except Exception:
+                pass
     finally:
         ib.disconnect()
 

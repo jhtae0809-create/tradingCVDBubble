@@ -24,12 +24,28 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from pymongo import MongoClient
 from pymongo.errors import PyMongoError
 
-DB_NAME = "finviz_db"
 ET = timezone(timedelta(hours=-4))          # matches the collectors' naive-ET
-WATCHED = ["raw_ticks", "raw_quotes", "level2_snapshots"]
+
+# This project uses TWO databases, which is easy to forget and expensive to get
+# wrong: a check pointed at the wrong one reports a healthy stream as dead.
+# Imported rather than hardcoded so they cannot drift apart from the collectors.
+from ibkr.tick_collector import DB_NAME as TICK_DB          # ticks + candles
+from level2_webapp.data_provider import (                   # depth snapshots
+    DB_NAME as L2_DB, COLLECTION_NAME as L2_COLLECTION)
+
+WATCHED = [
+    (TICK_DB, "raw_ticks"),
+    (TICK_DB, "raw_quotes"),
+    (L2_DB, L2_COLLECTION),
+]
 
 
 def _regular_hours(now_et: datetime) -> bool:
@@ -38,9 +54,11 @@ def _regular_hours(now_et: datetime) -> bool:
     return (9, 30) <= (now_et.hour, now_et.minute) < (16, 0)
 
 
-def _counts(db) -> dict:
-    out = {c: db[c].estimated_document_count() for c in WATCHED}
-    out["candles(ibkr_tick)"] = db["candles"].count_documents({"source": "ibkr_tick"})
+def _counts(client) -> dict:
+    out = {f"{db}.{c}": client[db][c].estimated_document_count()
+           for db, c in WATCHED}
+    out[f"{TICK_DB}.candles(ibkr_tick)"] = client[TICK_DB]["candles"].count_documents(
+        {"source": "ibkr_tick"})
     return out
 
 
@@ -71,7 +89,6 @@ def main() -> None:
             print("(the containers publish theirs on mongodb://127.0.0.1:27018/).")
         raise SystemExit(1)
 
-    db = client[DB_NAME]
     now_et = datetime.now(ET)
     rth = _regular_hours(now_et)
 
@@ -79,10 +96,10 @@ def main() -> None:
     print(f"time  : {now_et:%Y-%m-%d %H:%M} ET "
           f"({'regular hours' if rth else 'CLOSED — ticks are expected to be 0'})")
 
-    first = _counts(db)
+    first = _counts(client)
     print(f"\nsampling {args.seconds}s...")
     time.sleep(args.seconds)
-    second = _counts(db)
+    second = _counts(client)
 
     print()
     moving = []
@@ -91,7 +108,7 @@ def main() -> None:
         mark = "RISING" if delta > 0 else "flat"
         if delta > 0:
             moving.append(name)
-        print(f"  {name:<22} {second[name]:>9,}  {delta:+,} {mark}")
+        print(f"  {name:<38} {second[name]:>9,}  {delta:+,} {mark}")
 
     print()
     if moving:
