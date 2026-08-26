@@ -18,6 +18,7 @@ strategy — see [Where this could be applied](#where-this-could-be-applied).
 
 - **[USAGE.md](USAGE.md) — how to read the chart** (every color, line and control).
 - Jump to: [Requirements](#requirements) · [Install](#install) ·
+  [Gateway setup](#set-up-ib-gateway-live-path-only) ·
   [Run it: live data](#run-it-a-live-data) ·
   [Run it: bundled dataset](#run-it-b-bundled-dataset-no-accounts-needed) ·
   [What is where](#what-is-where) ·
@@ -37,8 +38,8 @@ That is the single most common reason a fresh clone shows an empty chart.
 |---|---|---|
 | **required** | **Python 3.11 – 3.14** | Verified on 3.12.4. Check with `python3 -V`. On 3.10 or older the install fails — see [When it doesn't work](#when-it-doesnt-work). |
 | **required** | **MongoDB running on `localhost:27017`** | Stores every candle tier, raw tick and L2 snapshot. Nothing works without it. |
-| live only | **IBKR account + IB Gateway or TWS**, logged in, API enabled | Source of tick-by-tick trades and quotes. |
-| live only | **Market-data subscription** (e.g. Nasdaq TotalView) | Without it, depth requests fail (`error 309`) and quotes are delayed. |
+| live only | **IBKR account + IB Gateway or TWS**, logged in, API enabled | Source of tick-by-tick trades and quotes. Step-by-step: [Set up IB Gateway](#set-up-ib-gateway-live-path-only). |
+| live only | **Market-data subscription** (e.g. Nasdaq TotalView) | Without it, depth requests fail (`error 309`) and quotes are delayed. A **paper** account inherits its parent live account's subscriptions — see [What the account has to be subscribed to](#what-the-account-has-to-be-subscribed-to). |
 | **required for correct volume** | **FinViz Elite account** | Supplies the consolidated 1-minute bars that scale the tick stream — roughly a tenth of the tape — up to real traded volume. The app still *draws* without it, but every volume and CVD figure is then several times too small, so it is not an optional extra. Missing or broken, it is reported in red on the dashboard. |
 
 **IB Gateway / TWS port — auto-detected.** Gateway and TWS speak the *identical*
@@ -151,6 +152,88 @@ runs on IBKR data alone and shows a red
 `FinViz unavailable — volume shown is UNSCALED tick volume` warning, because
 tick volume that has not been scaled to the consolidated tape is far too low
 and would otherwise look perfectly normal.
+
+---
+
+## Set up IB Gateway (live path only)
+
+Needed only for [Run it (A)](#run-it-a-live-data). The bundled-dataset path
+needs none of this.
+
+IB Gateway and TWS are the *same* API behind different front-ends. Gateway is
+the smaller of the two — no charts, no trading screens, just the connection —
+so it is what this project is developed against and what the instructions below
+assume. TWS works identically if you already have it open.
+
+**1) Download and install.**
+<https://www.interactivebrokers.com/en/trading/ibgateway-latest.php>
+
+**2) Log in — use a paper account.**
+
+Pick **IB API** (not FIX) as the mode, then log in. A paper account is strongly
+preferred: a live login triggers two-factor authentication on your phone every
+session, which makes an unattended collector impractical. A paper account
+inherits its **parent live account's market-data subscriptions**, so it sees the
+same real-time feed — paper here means paper *orders*, not paper *data*, and
+this project never places an order either way.
+
+**3) Enable the API.** *Configure → Settings → API → Settings*
+
+| Setting | Set it to | Why |
+|---|---|---|
+| **Enable ActiveX and Socket Clients** | **ticked** | The API is off by default. Nothing connects until this is on — this is the one non-negotiable box. |
+| **Read-Only API** | **leave it ticked** | Read-only blocks *order placement*, not market data. Every connection this repo opens passes `readonly=True` (`READONLY` in each `ibkr/*.py` collector), so it never asks for write access and read-only mode costs it nothing. Leaving it on means the code provably cannot trade on your account. |
+| **Socket port** | leave whatever is there | The collector probes 7497 / 4002 / 7496 / 4001 and uses whichever answers — see the port table in [Requirements](#requirements). Only pin it with `--port` if two instances are running at once. |
+| **Trusted IPs** | contains `127.0.0.1` | Usually there by default. If the collector is refused at the socket rather than timing out, check this. |
+
+> **Do not untick Read-Only to "fix" missing data.** It is a common wrong turn,
+> because a *write-requesting* client against a read-only Gateway does look like
+> a data failure: Gateway raises a confirmation dialog, and until someone clicks
+> it the handshake simply times out with no error explaining why. That is a
+> dialog you cannot see, not a permission you lack. This repo avoids it by
+> asking for read-only in the first place.
+
+**4) Leave Gateway running, and turn off the daily auto-logoff.**
+
+The collector needs the connection continuously — see [Known
+issues](#known-issues--current-limitations) item 3: downtime is a permanent hole
+in tick history that cannot be backfilled later. By default Gateway logs itself
+out once every 24 hours, so an unattended collector dies overnight. Under
+*Configure → Lock and Exit → Auto restart*, choose **Auto restart** rather than
+Auto logoff: Gateway then restarts and reconnects without asking for the
+password again.
+
+### One session per market-data subscription
+
+A market-data subscription permits **one live session at a time**, and paper
+shares its parent live account's subscription. So the same account logged in
+anywhere else — another machine, a phone app, the live account while the paper
+one runs — takes the feed away from this one. It is not a code failure and it
+produces a distinctive log line:
+
+```
+cdebug: QUERY | WARNING | Query error | 4;;NVDA@SMART Trades;;1;;true;;0;;I
+      | Trading TWS session is connected from a different IP address
+```
+
+The API-side symptoms are **error 10189** (tick-by-tick refused) and **error
+162** (historical bars refused), both worded as if the request itself were
+wrong. If either appears for every ticker at once, suspect a second session
+before suspecting the request.
+
+### What the account has to be subscribed to
+
+| Feed | Needed for | Without it |
+|---|---|---|
+| US real-time equities (e.g. **US Securities Snapshot and Futures Value Bundle** + **NASDAQ TotalView**) | trade + quote ticks | error 10189; no CVD at all |
+| **NASDAQ TotalView-OpenView** | Level-2 depth | error 309 / 10089; heatmap and S&R stay empty, everything else works |
+
+Depth over **SMART** aggregates whichever venues the account is permitted, so a
+partial subscription still draws a partial book rather than nothing. Requesting
+depth from a single exchange (`NASDAQ.NMS`) additionally requires the
+**TotalView-OpenView EDS** add-on, which licenses display outside TWS itself —
+without it that request is refused with `10089: requires additional
+subscription for API` even when plain TotalView is subscribed.
 
 ---
 
@@ -510,6 +593,9 @@ That is not a crash; load the bundled dataset
 | Collector connects but to the wrong instance (e.g. paper when you wanted live) | Both were listening and the probe took the first. Pin it: `python -m ibkr.dynamic_collector --port 7496`. |
 | `error 309 / not subscribed` | The IBKR account lacks a market-depth subscription (e.g. Nasdaq TotalView). Depth is unavailable; the rest still works. |
 | `error 10189 — requested market data is not subscribed` | Real-time market-data permission is missing or was lost (it can drop when the account session changes). Re-check the subscription in Account Management. |
+| `Trading TWS session is connected from a different IP address` in the Gateway log, and 10189 / 162 for **every** ticker at once | The same account is logged in somewhere else. One market-data subscription permits one session, and paper shares the parent live account's. Log the other session out — see [One session per market-data subscription](#one-session-per-market-data-subscription). |
+| Collector hangs at connect and then times out, with no error from Gateway | A confirmation dialog is waiting on the Gateway machine. This repo connects with `readonly=True` so it should not raise one; if you are running an older copy, either take the current `ibkr/` or click the dialog. **Unticking Read-Only API is not the fix** — read-only never blocked market data. |
+| `10089: requires additional subscription for API` on depth only | Single-exchange depth (`NASDAQ.NMS`) needs the **TotalView-OpenView EDS** add-on on top of TotalView. SMART depth still works; the heatmap draws from the venues you are permitted. |
 | `clientId already in use` / collector keeps disconnecting | Two collectors are running. `python stop_all.py`, then `python start_all.py` (which now refuses to start a duplicate). |
 | Data only appears for the ticker you searched | By design — collection is on demand, most-recent 5 tickers (3 for depth). |
 | A ticker searched outside market hours stays empty | Expected: there are no live ticks, and the 1-second backfill is thin outside regular hours. |
