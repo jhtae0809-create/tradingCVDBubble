@@ -1,0 +1,23 @@
+# IB Gateway, with one change: the API socket listens on IPv6 as well as IPv4.
+#
+# The upstream image is fine as-is under docker compose, which gives every
+# service an IPv4 address. Railway does not: its private network is IPv6-only,
+# services find each other at <name>.railway.internal, and a listener that
+# binds 0.0.0.0 is simply unreachable there.
+#
+# Gateway itself already listens on IPv6 — it is the socat bridge in front of
+# it that does not:
+#
+#   socat TCP-LISTEN:4004,fork TCP:127.0.0.1:4002   ->  0.0.0.0:4004
+#
+# TCP6-LISTEN with ipv6only=0 binds dual-stack, so the SAME image works under
+# compose and on Railway. Everything else is upstream's.
+FROM ghcr.io/gnzsnz/ib-gateway:stable
+
+USER root
+RUN sed -i \
+      's|socat TCP-LISTEN:"${PUBLISHED_PORT}",fork|socat TCP6-LISTEN:"${PUBLISHED_PORT}",fork,ipv6only=0|' \
+      /home/ibgateway/scripts/run_socat.sh \
+ && grep -q 'TCP6-LISTEN' /home/ibgateway/scripts/run_socat.sh \
+ || (echo "run_socat.sh did not match — upstream changed it" && exit 1)
+USER ibgateway

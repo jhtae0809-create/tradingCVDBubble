@@ -30,7 +30,14 @@ services:
   gateway:
     # Headless IB Gateway: Java + Xvfb + IBC, which handles the login and the
     # daily restart. Gateway has no headless mode of its own.
-    image: ghcr.io/gnzsnz/ib-gateway:stable
+    #
+    # Built rather than pulled, for a one-line patch that makes the API socket
+    # dual-stack — see Dockerfile.gateway. Compose would work without it;
+    # Railway's IPv6-only private network would not. Building it here means
+    # what gets tested locally is what gets deployed.
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.gateway
     environment:
       # TRADING_MODE picks which account AND which API port Gateway listens on:
       #   paper -> 4002      live -> 4001
@@ -90,6 +97,13 @@ services:
       # THE reason ibkr/*.py stopped hardcoding 127.0.0.1: here Gateway is a
       # different container, and loopback would be the collector itself.
       IB_HOST: gateway
+      # The collector needs FinViz too, not just the app. Its i1 refresh worker
+      # keeps a consolidated-volume reference for every COLLECTED ticker, while
+      # the app only fetches the one being VIEWED — so without these, a ticker
+      # that is collected but not on screen accumulates tick buckets that can
+      # never be scaled to real volume.
+      FINVIZ_USERNAME: ${FINVIZ_USERNAME:-}
+      FINVIZ_PASSWORD: ${FINVIZ_PASSWORD:-}
     command: >
       python -m ibkr.dynamic_collector
       --port ${IB_API_PORT:-4004}

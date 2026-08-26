@@ -82,28 +82,79 @@ retries — the same path that already handles an expired token.
 | `DEMO_SEED` | `1` | `0` skips the demo load (use once real data is being collected) |
 | `MONGO_WAIT_SECONDS` | `90` | How long to wait for the database before giving up |
 
-## Adding live IBKR data
+## Live IBKR data
 
-Not done here, and not a small addition. It needs:
+Built and verified locally as a four-service stack (`deploy/docker-compose.yml`):
+Mongo, Gateway, collector, app. Run it before paying Railway anything:
 
-- a **fourth service** running IB Gateway headless (Java + Xvfb + IBC, e.g. the
-  `gnzsnz/ib-gateway` image), ~1 GB RAM on its own;
-- the collector as a **fifth** service (`python -m ibkr.dynamic_collector`),
-  which also means the full `requirements.txt` rather than the short list;
-- `ibkr/*.py` currently dials `127.0.0.1`, which is the collector's own
-  container in a cloud deploy — the host has to become configurable first;
-- a **paper** account for the Gateway login. A live account needs 2FA approval
-  on a phone, and Gateway restarts daily, so the feed would die every day.
-  Paper logs in unattended and receives the identical real-time feed once
-  *"Share real-time market data with paper account"* is enabled in Client Portal;
+```
+cp deploy/.env.example deploy/.env   # fill in, then:
+cd deploy && docker compose up -d --build
+```
 
-- **only one IBKR session anywhere.** Market data is bound to a single session
-  per account, and a paper account borrows the live account's entitlement, so a
-  phone app or a second Gateway logged in elsewhere takes it: `reqTickByTickData`
-  then fails with *error 10189, "Trading TWS session is connected from a
-  different IP address"* and historical requests with *error 162*. A cloud
-  Gateway is by definition a different IP, so once this is deployed a local
-  Gateway will fight it for the feed;
-- the market-data subscriptions on that account: US Securities Snapshot and
-  Futures Value Bundle + US Equity and Options Add-On Streaming Bundle (both
-  needed for `reqTickByTickData`) and NASDAQ TotalView-OpenView for depth.
+### What compose proves, and what it does not
+
+Verified end to end in containers: Gateway logs into the paper account
+unattended, the collector reaches it and subscribes ticks + depth, catch-up
+backfill writes 1sec bars, FinViz fetches its own token and its i1 bars, the
+rollups run, and the app renders a chart with the source mix in its header.
+
+Live tick and depth **volume** can only be confirmed while the market is open —
+IBKR sends nothing when it is shut, so a quiet overnight run is not a fault:
+
+```
+python scripts/check_stack.py --mongo mongodb://127.0.0.1:27018/
+python scripts/check_depth_sources.py --ticker NVDA --port 4004
+```
+
+Compose is a good rehearsal but not a proof of Railway, because Railway does
+not read this file — each service there is configured by hand — and its network
+behaves differently (below).
+
+### Mapping it onto Railway
+
+Four services. Only the app gets a public domain; the rest talk over the
+private network.
+
+| Service | Source | Reaches |
+|---|---|---|
+| `mongo` | Railway's MongoDB | — |
+| `gateway` | `deploy/Dockerfile.gateway` | — |
+| `collector` | `deploy/Dockerfile.collector` | `MONGO_URI`, `IB_HOST=gateway` |
+| `app` | root `Dockerfile` | `MONGO_URI` |
+
+Things that differ from compose and will bite otherwise:
+
+- **Railway's private network is IPv6-only.** Services resolve each other at
+  `<name>.railway.internal`, and a listener bound to `0.0.0.0` is unreachable.
+  The upstream Gateway image puts socat in front of the API on IPv4 only, which
+  is why `deploy/Dockerfile.gateway` exists: it makes that one listener
+  dual-stack, so the same image works in both places. Set `IB_HOST` to the
+  Gateway service's private hostname.
+- **The API port is not the port Gateway prints.** Gateway binds 4002 (paper) /
+  4001 (live) to loopback; socat republishes on 4004 / 4003. Dial the socat one.
+- **`EXISTING_SESSION_DETECTED_ACTION` must not be `manual`** (its default).
+  IBKR allows one session per account, and the dialog it raises has no one to
+  click it on a headless container: Gateway hangs at login and never opens the
+  API port.
+- **Memory.** Gateway is the heavy one — measured at ~640 MB, Java plus Xvfb.
+  The others are ~140 MB (mongo), ~235 MB (app), ~75 MB (collector).
+- **The filesystem is ephemeral.** Mongo therefore has to be Railway's managed
+  service, not a container with a local volume. `finviz/api_keys.py` is
+  regenerated on each boot from the credentials, so losing it costs one login.
+
+### The account
+
+- Use a **paper** account. A live login needs 2FA approval on a phone and
+  Gateway restarts daily, so the feed would die every day. Paper logs in
+  unattended and gets the identical real-time feed once *"Share real-time
+  market data with paper trading account"* is enabled in Client Portal.
+- **One IBKR session anywhere.** Market data is bound to a single session per
+  account, and a paper account borrows the live account's entitlement, so a
+  phone app or a second Gateway takes it: `reqTickByTickData` then fails with
+  *error 10189* and historical requests with *error 162*, both worded as an
+  IP-address problem. A cloud Gateway is by definition a different IP, so once
+  deployed it will fight any local Gateway for the feed.
+- Subscriptions on that account: US Securities Snapshot and Futures Value
+  Bundle + US Equity and Options Add-On Streaming Bundle (both needed for
+  `reqTickByTickData`), and NASDAQ TotalView-OpenView for depth.
