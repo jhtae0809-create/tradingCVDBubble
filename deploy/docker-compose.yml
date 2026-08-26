@@ -43,16 +43,33 @@ services:
       # IB_USERNAME / IB_PASSWORD and the mapping happens here, once.
       TWS_USERID: ${IB_USERNAME:?set IB_USERNAME in deploy/.env}
       TWS_PASSWORD: ${IB_PASSWORD:?set IB_PASSWORD in deploy/.env}
-      # Let the collector's container reach the API socket. Gateway otherwise
-      # binds loopback only, which in a container means nothing else can dial it.
+      # IBKR allows ONE session per account. When it finds another one it pops
+      # an "Existing session detected" dialog, and IBC's default for that is
+      # `manual` — meaning it waits for a human to click, forever, on a
+      # headless container with no screen. Gateway then never finishes logging
+      # in and never opens the API port, so the collector just gets connection
+      # refused with nothing in ITS log to explain why. `primary` makes this
+      # session take over and stay taken: a later session cannot displace it.
+      # Set `primaryoverride` instead if you want to be able to grab the feed
+      # back from a local Gateway while the deployment is running.
+      EXISTING_SESSION_DETECTED_ACTION: ${EXISTING_SESSION_DETECTED_ACTION:-primary}
+      # Gateway binds its API to loopback only and keeps TrustedIPs=127.0.0.1;
+      # the image bridges that with socat, so every connection Gateway sees
+      # really does come from 127.0.0.1 and no other container needs trusting.
+      # Kept because a future image version may stop using socat.
       TRUSTED_IPS: ${TRUSTED_IPS:-0.0.0.0/0}
       READ_ONLY_API: ${READ_ONLY_API:-yes}
       TZ: America/New_York
     ports:
-      # Exposed for debugging from the host only. Not needed by the collector,
-      # which reaches Gateway over the compose network by service name.
-      - "127.0.0.1:4002:4002"
-      - "127.0.0.1:4001:4001"
+      # 4004/4003, NOT 4002/4001. Gateway binds its own API port (4002 paper,
+      # 4001 live) to loopback, so nothing outside the container can reach it;
+      # the image runs socat to republish it on API_PORT+2 — 4004 for paper,
+      # 4003 for live. Publishing 4002 here just forwards to a socket Gateway
+      # will not answer, which shows up as an API handshake timeout rather
+      # than a refused connection, so it looks like a Gateway fault.
+      # Host-side only: the collector uses the compose network, not these.
+      - "127.0.0.1:4004:4004"
+      - "127.0.0.1:4003:4003"
 
   collector:
     build:
@@ -70,7 +87,7 @@ services:
       IB_HOST: gateway
     command: >
       python -m ibkr.dynamic_collector
-      --port ${IB_API_PORT:-4002}
+      --port ${IB_API_PORT:-4004}
     restart: unless-stopped
 
   app:

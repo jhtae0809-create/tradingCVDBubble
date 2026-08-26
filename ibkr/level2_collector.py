@@ -61,6 +61,14 @@ ET = ZoneInfo("America/New_York")
 # process's own container. Set IB_HOST to the Gateway service name.
 IB_HOST = os.environ.get("IB_HOST", "127.0.0.1")
 
+# Connect read-only. Nothing in this repo ever places an order, and saying so
+# at connect time matters operationally: when Gateway runs with
+# ReadOnlyApi=yes — which a deployment on someone else's account should — a
+# client that asks for write access makes Gateway pop an "API client needs
+# write access action confirmation" dialog. On a headless container nobody
+# clicks it, so the connection just times out with no hint of the cause.
+READONLY = True
+
 # Dynamic mode: how often to reconcile the subscribed set with collector_requests.
 DYNAMIC_POLL_SEC = 5.0
 
@@ -162,7 +170,9 @@ class Level2Collector:
                 await self._subscribe_one(sym)
 
     async def _connect_and_subscribe(self):
-        await self.ib.connectAsync(IB_HOST, self.port, clientId=self.client_id)
+        await self.ib.connectAsync(IB_HOST, self.port,
+                                   clientId=self.client_id,
+                                   readonly=READONLY)
         log.info(f"Connected (clientId={self.client_id})")
         self.books = {}
         self.contracts = {}

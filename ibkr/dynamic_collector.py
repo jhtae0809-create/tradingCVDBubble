@@ -89,6 +89,14 @@ CONNECT_PROBE_TIMEOUT = 5.0     # per-port probe; a closed port refuses instantl
 # the collector's own container. Set IB_HOST to the Gateway service name.
 IB_HOST = os.environ.get("IB_HOST", "127.0.0.1")
 
+# Connect read-only. Nothing in this repo ever places an order, and saying so
+# at connect time matters operationally: when Gateway runs with
+# ReadOnlyApi=yes — which a deployment on someone else's account should — a
+# client that asks for write access makes Gateway pop an "API client needs
+# write access action confirmation" dialog. On a headless container nobody
+# clicks it, so the connection just times out with no hint of the cause.
+READONLY = True
+
 
 class UnifiedCollector:
     def __init__(self, port: int | None, client_id: int, max_tickers: int, max_depth: int,
@@ -393,7 +401,8 @@ class UnifiedCollector:
                              f"clientId={self.client_id}...")
                 await self.ib.connectAsync(IB_HOST, port,
                                            clientId=self.client_id,
-                                           timeout=CONNECT_PROBE_TIMEOUT)
+                                           timeout=CONNECT_PROBE_TIMEOUT,
+                                           readonly=READONLY)
             except Exception as e:
                 errors.append(f"{port} ({label}): {e!r}")
                 continue

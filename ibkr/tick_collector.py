@@ -63,6 +63,14 @@ DB_NAME = "finviz_db"
 # process's own container. Set IB_HOST to the Gateway service name.
 IB_HOST = os.environ.get("IB_HOST", "127.0.0.1")
 
+# Connect read-only. Nothing in this repo ever places an order, and saying so
+# at connect time matters operationally: when Gateway runs with
+# ReadOnlyApi=yes — which a deployment on someone else's account should — a
+# client that asks for write access makes Gateway pop an "API client needs
+# write access action confirmation" dialog. On a headless container nobody
+# clicks it, so the connection just times out with no hint of the cause.
+READONLY = True
+
 # Flush the NBBO buffer once it reaches this many quotes even if no trade has
 # rolled the 1-sec bar over. Quotes update far more often than trades, so during
 # quote-only periods (halts, thin symbols, pre-market) the bar flush may not fire
@@ -376,7 +384,9 @@ class TickCollector:
             f"[{self.ticker}] Connecting to IB Gateway "
             f"(port={self.port}, clientId={self.client_id})..."
         )
-        await self.ib.connectAsync(IB_HOST, self.port, clientId=self.client_id)
+        await self.ib.connectAsync(IB_HOST, self.port,
+                                   clientId=self.client_id,
+                                   readonly=READONLY)
         logging.info(f"[{self.ticker}] Connected.")
 
         contract = Stock(self.ticker, "SMART", "USD")
