@@ -25,6 +25,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from pymongo import MongoClient
+from pymongo.errors import PyMongoError
 
 DB_NAME = "finviz_db"
 ET = timezone(timedelta(hours=-4))          # matches the collectors' naive-ET
@@ -52,7 +53,25 @@ def main() -> None:
                     help="gap between the two samples (default: 30)")
     args = ap.parse_args()
 
-    db = MongoClient(args.mongo, serverSelectionTimeoutMS=5000)[DB_NAME]
+    client = MongoClient(args.mongo, serverSelectionTimeoutMS=5000)
+    try:
+        # Force the connection now. Without this the failure surfaces later, on
+        # the first real query, as a page of pymongo internals — which says
+        # "ServerSelectionTimeoutError" at the very bottom and nothing useful
+        # anywhere a reader looks first.
+        client.admin.command("ping")
+    except PyMongoError as e:
+        print(f"Cannot reach MongoDB at {args.mongo}\n  {type(e).__name__}\n")
+        if ":27018" in args.mongo:
+            print("27018 is the containers' MongoDB, so the usual cause is that")
+            print("the stack is not up. Start Docker Desktop, then:")
+            print("    cd deploy && docker compose up -d")
+        else:
+            print("Start your local mongod, or pass --mongo for the one you meant")
+            print("(the containers publish theirs on mongodb://127.0.0.1:27018/).")
+        raise SystemExit(1)
+
+    db = client[DB_NAME]
     now_et = datetime.now(ET)
     rth = _regular_hours(now_et)
 
