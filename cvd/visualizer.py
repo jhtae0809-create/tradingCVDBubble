@@ -44,6 +44,14 @@ def nearest_positions(index, targets):
     t = np.asarray(targets)
     if vals.size == 0 or t.size == 0:
         return np.empty(0, dtype=int)
+    # Normalise both sides through DatetimeIndex when the index is temporal.
+    # A plain list of Timestamps — which is how the anchor callers pass a
+    # single instant — becomes an OBJECT array, and `datetime64 - object` is a
+    # TypeError, not a coercion. Rebuilding both at a common unit also settles
+    # us-vs-ns frames, which subtract without complaint but compare wrongly.
+    if vals.dtype.kind == "M":
+        vals = pd.DatetimeIndex(index).to_numpy(dtype="datetime64[ns]")
+        t = pd.DatetimeIndex(targets).to_numpy(dtype="datetime64[ns]")
     right = np.clip(np.searchsorted(vals, t), 0, vals.size - 1)
     left = np.clip(right - 1, 0, vals.size - 1)
     # Ties go left, matching get_indexer's behaviour.
