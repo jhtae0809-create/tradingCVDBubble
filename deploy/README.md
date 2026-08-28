@@ -22,8 +22,8 @@ plus gunicorn) and runs `deploy/railway_start.py`, which:
 ## Steps
 
 1. **Create the project.** railway.app → New Project → Deploy from GitHub repo →
-   pick `tradingCVDBubble`. Railway reads `railway.json` and builds the
-   `Dockerfile`.
+   pick `tradingCVDBubble`. Railway builds the repo-root `Dockerfile`, whose
+   `CMD` is `python deploy/railway_start.py`.
 
 2. **Add a MongoDB service.** In the same project: New → Database → MongoDB.
 
@@ -116,19 +116,25 @@ behaves differently (below).
 Four services, all built from this same repo. Only the app gets a public
 domain; the rest talk over the private network.
 
-| Service | Config file (Settings → Config-as-code) | Needs |
+| Service | Settings → Build → Dockerfile Path | Settings → Deploy → Start Command |
 |---|---|---|
 | `mongo` | — (Railway's managed MongoDB) | — |
-| `gateway` | `deploy/railway.gateway.json` | the IBKR login |
-| `collector` | `deploy/railway.collector.json` | `MONGO_URI`, `IB_HOST` |
-| `app` | `railway.json` (the default) | `MONGO_URI` |
+| `gateway` | `deploy/Dockerfile.gateway` | — (the image's own entrypoint) |
+| `collector` | `deploy/Dockerfile.collector` | `python -m ibkr.dynamic_collector --port 4004` |
+| `app` | `Dockerfile` (the default) | — (the image's `CMD`) |
 
-**Set the config file path on each service before its first deploy.** Railway
-defaults every service to the repo-root `railway.json`, which builds the *app*
-image and runs `deploy/railway_start.py` — so a gateway or collector service
-left on the default silently deploys a second dashboard instead. Each config
-above pins its own Dockerfile and start command, so nothing has to be typed
-into the build UI.
+**Set the Dockerfile path on each service before its first deploy.** Left
+unset, Railway builds the repo-root `Dockerfile`, which is the *app* image —
+so a gateway or collector service on the default silently deploys a second
+dashboard instead.
+
+There is deliberately no `railway.json` here. Railway has deprecated
+config-as-code in favour of `.railway/railway.ts`, and while deprecated it no
+longer applies reliably: a `railway.json` at the repo root is still read as
+every service's default, but a per-service override pointing elsewhere is not,
+which leaves a gateway service running the dashboard's start command with no
+indication of why. Typing the two fields above into the UI is unambiguous and
+takes effect immediately.
 
 Then, per service:
 
