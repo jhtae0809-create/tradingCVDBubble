@@ -113,15 +113,33 @@ behaves differently (below).
 
 ### Mapping it onto Railway
 
-Four services. Only the app gets a public domain; the rest talk over the
-private network.
+Four services, all built from this same repo. Only the app gets a public
+domain; the rest talk over the private network.
 
-| Service | Source | Reaches |
+| Service | Config file (Settings → Config-as-code) | Needs |
 |---|---|---|
-| `mongo` | Railway's MongoDB | — |
-| `gateway` | `deploy/Dockerfile.gateway` | — |
-| `collector` | `deploy/Dockerfile.collector` | `MONGO_URI`, `IB_HOST=gateway` |
-| `app` | root `Dockerfile` | `MONGO_URI` |
+| `mongo` | — (Railway's managed MongoDB) | — |
+| `gateway` | `deploy/railway.gateway.json` | the IBKR login |
+| `collector` | `deploy/railway.collector.json` | `MONGO_URI`, `IB_HOST` |
+| `app` | `railway.json` (the default) | `MONGO_URI` |
+
+**Set the config file path on each service before its first deploy.** Railway
+defaults every service to the repo-root `railway.json`, which builds the *app*
+image and runs `deploy/railway_start.py` — so a gateway or collector service
+left on the default silently deploys a second dashboard instead. Each config
+above pins its own Dockerfile and start command, so nothing has to be typed
+into the build UI.
+
+Then, per service:
+
+| Service | Variables |
+|---|---|
+| `gateway` | `TWS_USERID`, `TWS_PASSWORD` (the image's own names — there is no compose file here to map `IB_USERNAME` for you), `TRADING_MODE=paper`, `EXISTING_SESSION_DETECTED_ACTION=primary`, `TRUSTED_IPS=0.0.0.0/0`, `READ_ONLY_API=yes`, `TZ=America/New_York` |
+| `collector` | `MONGO_URI` (reference variable), `IB_HOST=<gateway>.railway.internal`, `FINVIZ_USERNAME`, `FINVIZ_PASSWORD` |
+| `app` | `MONGO_URI` (reference variable), `DEMO_SEED=0`, `FINVIZ_USERNAME`, `FINVIZ_PASSWORD` |
+
+`DEMO_SEED=0` matters once the collector is running: left at `1` the app seeds
+the fixed demo day into a database that is being filled with live data.
 
 Things that differ from compose and will bite otherwise:
 
