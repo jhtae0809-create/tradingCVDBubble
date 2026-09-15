@@ -518,5 +518,6 @@ draw. That is not a crash; run the collector or load the bundled dataset.
 
 ## Credit
 
-Based on initial code by Aisiri Cherrimane Narendra —
+Reference from Aisiri Cherrimane Narendra, previous intern —
 [github.com/aisiricherrimane](https://github.com/aisiricherrimane)
+Reference from Eric, previous intern
